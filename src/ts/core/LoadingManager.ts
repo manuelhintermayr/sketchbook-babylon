@@ -29,6 +29,11 @@ export async function loadModel(scene: Scene, path: string, onProgress?: (loaded
 			gltf: {
 				animationStartMode: GLTFLoaderAnimationStartMode.NONE,
 				compileMaterials: false,
+				// three's GLTFLoader gave every node its own Mesh. Babylon
+				// would turn nodes sharing a mesh into InstancedMeshes,
+				// which the physics-marker dispatch can't hide or collide
+				// (world.glb reuses one cube for dozens of collision boxes).
+				createInstances: false,
 			},
 		},
 	});

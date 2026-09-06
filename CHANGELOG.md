@@ -25,6 +25,15 @@ the procedural audio synths are unchanged.
 - **Sandboxes** - `BaseScene` builds against the World's scene through a factory; the socketControl scenes use small builder helpers, the swift502 credits sign was converted from FBX to GLB with Blender (`build/assets/credits_sign/sign.glb`).
 - **Tooling** - webpack emits `build/HavokPhysics.wasm` next to the bundle and folds Babylon's lazy shader chunks into the single UMD file; `index.html` awaits `Sketchbook.initPhysics()`.
 
+### Fixed (after the first hands-on pass)
+
+- Vehicles snapshot their spawn rotation into `initQuaternion` on `addToWorld` (cannon's `World.addBody` did this); without it the car's flip reset snapped the chassis to yaw 0 at spawn and whenever it got slow with wheels in the air.
+- Physics steps at fixed 1/60 s substeps again (max 10 per frame); the raycast vehicle's tyre model is frame-rate dependent otherwise.
+- Chassis inertia follows cannon's AABB box approximation and Havok's inertia-over-mass convention; measured steering response now matches the three.js build.
+- glTF loads with `createInstances: false` so shared collision-marker meshes are real meshes (hidden + collidable) instead of visible white instances.
+- Primitives without a glTF material render dark like three's metallic default; the label overlay no longer intercepts click-and-drag camera input.
+- Title screen, page title and welcome dialog name the Babylon.js + Havok edition.
+
 ### Removed
 
 - `three`, `cannon-es`, `cannon-es-debugger`, `three-to-cannon` and the upstream vehicle-mesh slots of `BaseScene` (never consumed).

@@ -45,7 +45,13 @@ export class LabelRenderer
 	{
 		this.scene = scene;
 		this.domElement = document.createElement('div');
+		this.domElement.style.position = 'absolute';
+		this.domElement.style.top = '0';
+		this.domElement.style.left = '0';
 		this.domElement.style.overflow = 'hidden';
+		// The layer sits above the canvas; without this it would swallow
+		// the click-and-drag camera input.
+		this.domElement.style.pointerEvents = 'none';
 	}
 
 	public setSize(width: number, height: number): void

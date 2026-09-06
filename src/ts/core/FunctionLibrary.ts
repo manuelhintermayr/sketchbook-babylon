@@ -441,6 +441,19 @@ export function setupMeshProperties(child: AbstractMesh): void
 	const source = child.material;
 	if (source === null || source instanceof StandardMaterial) return;
 
+	// Primitives without a glTF material: three's loader gave them a
+	// fully metallic white MeshStandardMaterial, which renders near black
+	// without an environment map - the marina walls and pillars in
+	// world.glb rely on that look. Babylon's default would be plain white.
+	if (source.name === '__GLTFLoader._default')
+	{
+		const dark = new StandardMaterial('gltfDefault', child.getScene());
+		dark.diffuseColor.set(0.06, 0.06, 0.06);
+		dark.specularColor.set(0.05, 0.05, 0.05);
+		child.material = dark;
+		return;
+	}
+
 	const mat = new StandardMaterial(source.name, child.getScene());
 	mat.specularColor.set(0, 0, 0);
 	mat.backFaceCulling = source.backFaceCulling;
