@@ -1,9 +1,9 @@
-import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
+import { Color3, MeshBuilder, StandardMaterial, Vector3 } from '@babylonjs/core';
 
 import { World } from '../World';
 import { ShapeEntity } from '../spawn/ShapeEntity';
 import { DialogBox } from '../ui/DialogBox';
+import * as Utils from '../../core/FunctionLibrary';
 
 // Three keyboard features ported from swift502 v0.2.0's
 // `examples/characters.html` GameMode (FreeRoam):
@@ -13,7 +13,7 @@ import { DialogBox } from '../ui/DialogBox';
 //        spawn so the world doesn't accumulate balls indefinitely.
 //        Originally bound to F upstream; we use B because F is the
 //        engine's "enter vehicle" key.
-//   T  - toggle slow motion (Time_Scale 1 ↔ 0.3).
+//   T  - toggle slow motion (Time_Scale 1 <-> 0.3).
 //   V  - cycle the third-person camera radius through 1.6 / 3 / 6 / 10 m.
 //        Only fires when the player is on foot - vehicles override V
 //        for first-person toggle.
@@ -27,6 +27,9 @@ const BALL_RADIUS = 0.3;
 const BALL_MASS = 1;
 const MAX_BALLS = 10;
 const BALL_OFFSET = 1.5; // meters in front of the camera
+
+// Cameras look down local -Z in a right-handed scene.
+const _LOCAL_FORWARD = new Vector3(0, 0, -1);
 
 export function wireV02GameMode(world: World): void
 {
@@ -70,22 +73,21 @@ function isInputBlocked(world: World): boolean
 function spawnBall(world: World, balls: ShapeEntity[]): void
 {
 	const cam = world.camera;
-	const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
-	const spawnPos = cam.position.clone().addScaledVector(forward, BALL_OFFSET);
+	const forward = cam.getDirection(_LOCAL_FORWARD);
+	const spawnPos = cam.position.add(forward.scale(BALL_OFFSET));
 
-	const mesh = new THREE.Mesh(
-		new THREE.SphereGeometry(BALL_RADIUS, 16, 12),
-		new THREE.MeshLambertMaterial({ color: 0xcccccc }),
-	);
-	mesh.castShadow = true;
-	mesh.receiveShadow = true;
-	mesh.position.copy(spawnPos);
-	mesh.userData = { mass: String(BALL_MASS), radius: String(BALL_RADIUS) };
+	const mesh = MeshBuilder.CreateSphere('ball', { diameter: BALL_RADIUS * 2, segments: 12 }, world.scene);
+	const mat = new StandardMaterial('ballMaterial', world.scene);
+	mat.diffuseColor = Color3.FromHexString('#cccccc');
+	mat.specularColor = Color3.Black();
+	mesh.material = mat;
+	mesh.position.copyFrom(spawnPos);
+	Utils.setUserData(mesh, { mass: String(BALL_MASS), radius: String(BALL_RADIUS) });
 
 	const ball = new ShapeEntity(mesh, 'sphere');
 	// Toss the ball forward so it flies out of the camera instead of
 	// dropping at the player's feet.
-	ball.phys.body.velocity.copy(new CANNON.Vec3(forward.x * 10, forward.y * 10, forward.z * 10));
+	ball.phys.body.setLinearVelocity(forward.scale(10));
 
 	world.add(ball);
 	balls.push(ball);

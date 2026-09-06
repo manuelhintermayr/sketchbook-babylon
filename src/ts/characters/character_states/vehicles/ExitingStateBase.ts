@@ -1,6 +1,6 @@
-import * as THREE from 'three';
-import * as Utils from '../../../core/FunctionLibrary';
+import { Quaternion, TransformNode, Vector3 } from '@babylonjs/core';
 
+import * as Utils from '../../../core/FunctionLibrary';
 import
 {
 	CharacterStateBase,
@@ -10,16 +10,19 @@ import { VehicleSeat } from '../../../vehicles/VehicleSeat';
 import { IControllable } from '../../../interfaces/IControllable';
 import { Vehicle } from '../../../vehicles/Vehicle';
 
+const _chassisVelocity = new Vector3();
+const _exitPos = new Vector3();
+
 export abstract class ExitingStateBase extends CharacterStateBase
 {
 	protected vehicle: IControllable;
 	protected seat: VehicleSeat;
-	protected startPosition: THREE.Vector3 = new THREE.Vector3();
-	protected endPosition: THREE.Vector3 = new THREE.Vector3();
-	protected startRotation: THREE.Quaternion = new THREE.Quaternion();
-	protected endRotation: THREE.Quaternion = new THREE.Quaternion();
-	protected exitPoint: THREE.Object3D;
-	protected dummyObj: THREE.Object3D;
+	protected startPosition: Vector3 = new Vector3();
+	protected endPosition: Vector3 = new Vector3();
+	protected startRotation: Quaternion = new Quaternion();
+	protected endRotation: Quaternion = new Quaternion();
+	protected exitPoint: TransformNode;
+	protected dummyObj: TransformNode;
 
 	constructor(character: Character, seat: VehicleSeat)
 	{
@@ -31,23 +34,26 @@ export abstract class ExitingStateBase extends CharacterStateBase
 
 		this.seat.door?.open();
 
-		this.startPosition.copy(this.character.position);
-		this.startRotation.copy(this.character.quaternion);
+		this.startPosition.copyFrom(this.character.position);
+		this.startRotation.copyFrom(Utils.getQuaternion(this.character));
 
-		this.dummyObj = new THREE.Object3D();
+		this.dummyObj = new TransformNode('exitDummy', character.getScene());
+		this.dummyObj.rotationQuaternion = Quaternion.Identity();
 	}
 
 	public detachCharacterFromVehicle(): void
 	{
 		this.character.controlledObject = undefined;
 		this.character.resetOrientation();
-		this.character.world.graphicsWorld.attach(this.character);
+		this.character.world.attachNode(this.character);
 		this.character.resetVelocity();
 		this.character.setPhysicsEnabled(true);
 		this.character.setPosition(this.character.position.x, this.character.position.y, this.character.position.z);
 		this.character.inputReceiverUpdate(0);
-		this.character.characterCapsule.body.velocity.copy((this.vehicle as unknown as Vehicle).rayCastVehicle.chassisBody.velocity);
+		(this.vehicle as unknown as Vehicle).collision.getLinearVelocityToRef(_chassisVelocity);
+		this.character.characterCapsule.body.setLinearVelocity(_chassisVelocity);
 		this.character.feetRaycast();
+		this.dummyObj.dispose();
 	}
 
 	public updateEndRotation(): void
@@ -56,11 +62,12 @@ export abstract class ExitingStateBase extends CharacterStateBase
 		forward.y = 0;
 		forward.normalize();
 
-		this.character.world.graphicsWorld.attach(this.dummyObj);
-		this.exitPoint.getWorldPosition(this.dummyObj.position);
-		let target = this.dummyObj.position.clone().add(forward);
+		this.dummyObj.setParent(null);
+		Utils.getWorldPosition(this.exitPoint, _exitPos);
+		this.dummyObj.position.copyFrom(_exitPos);
+		let target = this.dummyObj.position.add(forward);
 		this.dummyObj.lookAt(target);
-		this.seat.seatPointObject.parent.attach(this.dummyObj);
-		this.endRotation.copy(this.dummyObj.quaternion);
+		this.dummyObj.setParent(this.seat.seatPointObject.parent);
+		this.endRotation.copyFrom(Utils.getQuaternion(this.dummyObj));
 	}
 }

@@ -1,14 +1,15 @@
+import { TransformNode } from '@babylonjs/core';
+
 import { Path } from './Path';
-import * as THREE from 'three';
 
 export class PathNode
 {
-	public object: THREE.Object3D;
+	public object: TransformNode;
 	public path: Path;
 	public nextNode: PathNode;
 	public previousNode: PathNode;
 
-	constructor(child: THREE.Object3D, path: Path)
+	constructor(child: TransformNode, path: Path)
 	{
 		this.object = child;
 		this.path = path;

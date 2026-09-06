@@ -1,8 +1,7 @@
-import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
+import { Color3, Mesh, StandardMaterial, Vector3 } from '@babylonjs/core';
 
 import { World } from '../World';
-import { LoadingManager } from '../../core/LoadingManager';
+import { LoadedModel, LoadingManager } from '../../core/LoadingManager';
 import * as Utils from '../../core/FunctionLibrary';
 import { CollisionGroups } from '../../enums/CollisionGroups';
 import { BoxCollider } from '../../physics/colliders/BoxCollider';
@@ -17,42 +16,43 @@ import { addMapSwitcher } from '../setup/MapSwitcher';
 import { injectDefaultSceneNPCs } from '../setup/DefaultNPCInjector';
 import { injectWanderingAnimals, injectFlyingBirds, injectButterflies } from '../setup/AnimalInjector';
 
-// Walks a freshly-loaded GLTF scene (real or sandbox-synthesised) and
+const _worldPos = new Vector3();
+
+// Walks a freshly-loaded model (real .glb or sandbox-synthesised) and
 // dispatches each node by its userData.data tag to the right entity
-// constructor. Box / trimesh / cylinder physics shapes register on
-// the cannon world; paths and scenarios collect into world.paths /
+// constructor. Box / trimesh / cylinder physics shapes become static
+// Havok bodies; paths and scenarios collect into world.paths /
 // world.scenarios; positional audio markers spawn Speakers; ocean /
 // grass material names trigger their respective shader entities.
 //
-// After the traversal finishes the scene mesh is added to the
-// graphicsWorld, the map switcher and the procedural NPC + animal
-// injectors run, and the default scenario is launched if one was
-// authored. Same flow as before, just lifted out of World.
-export function loadScene(world: World, loadingManager: LoadingManager, gltf: any): void
+// After the traversal finishes the map switcher and the procedural
+// NPC + animal injectors run, and the default scenario is launched if
+// one was authored.
+export function loadScene(world: World, loadingManager: LoadingManager, model: LoadedModel): void
 {
 	// Map switcher first - the dropdown lands at the top of the
 	// 'Map & Scenarios' folder so the player picks the world before
 	// the per-map scenario buttons that get added during the traversal.
 	addMapSwitcher(world);
 
-	gltf.scene.traverse((child) =>
+	const scene = world.scene;
+
+	Utils.traverse(model.root, (child) =>
 	{
-		if (!child.hasOwnProperty('userData')) return;
-
-		if (child.type === 'Mesh')
+		if (Utils.isRenderableMesh(child))
 		{
-			// TrimeshCollider needs non-indexed geometry. Only convert
-			// when actually indexed - sandbox scenes build their
-			// BufferGeometries manually without an index, in which case
-			// toNonIndexed() is a no-op that warns.
-			if (child.geometry.index !== null) child.geometry = child.geometry.toNonIndexed();
 			Utils.setupMeshProperties(child);
-			world.sky.csm.setupMaterial(child.material);
+			world.sky.registerShadowCaster(child);
 
-			if (child.material.name === 'ocean' || child.material.name === 'ocean.001')
+			const material = child.material;
+			const materialName = material !== null ? material.name : '';
+
+			if (materialName === 'ocean' || materialName === 'ocean.001')
 			{
 				world.ocean = new Ocean(child, world);
 				world.registerUpdatable(world.ocean);
+				// The source plane is replaced by the ocean tiles and hidden.
+				world.sky.unregisterShadowCaster(child);
 			}
 
 			// socketControl-style instanced grass field. Any mesh in
@@ -63,17 +63,17 @@ export function loadScene(world: World, loadingManager: LoadingManager, gltf: an
 			// Replace the GLB-shipped material wholesale - the original
 			// carries either a near-black diffuse map or fully-black
 			// PBR factors, which made the meadow look black past the
-			// 30 m LOD cut where the instanced blades drop out. A flat
-			// mid-green Lambert reads as continuous lawn from any
-			// distance; Grass shadow handling on the chassis is
-			// unaffected because nothing else inspects this material.
-			if (child.material.name === 'grass')
+			// LOD cut where the instanced blades drop out. A flat
+			// mid-green lambert reads as continuous lawn from any
+			// distance; nothing else inspects this material.
+			if (materialName === 'grass')
 			{
-				child.material = new THREE.MeshLambertMaterial({
-					color: 0x4a8a3a,
-					name: 'grass',
-				});
-				const grass = new Grass(child, world);
+				const instances = material !== null ? Utils.materialUserData(material).instances : undefined;
+				const lawn = new StandardMaterial('grass', scene);
+				lawn.diffuseColor = Color3.FromHexString('#4a8a3a');
+				lawn.specularColor = Color3.Black();
+				child.material = lawn;
+				const grass = new Grass(child, world, typeof instances === 'number' ? instances : undefined);
 				world.add(grass);
 			}
 
@@ -83,83 +83,86 @@ export function loadScene(world: World, loadingManager: LoadingManager, gltf: an
 			// we use the DALL-E moon-with-flowers texture instead.
 			if (child.name === 'Layer0_001')
 			{
-				const tex = new THREE.TextureLoader().load('src/img/moon-with-flowers.png');
-				tex.colorSpace = THREE.SRGBColorSpace;
-				child.material = new THREE.MeshBasicMaterial({ map: tex });
+				const moonMat = new StandardMaterial('moonSurface', scene);
+				moonMat.disableLighting = true;
+				moonMat.emissiveTexture = Utils.loadTexture(scene, 'src/img/moon-with-flowers.png', false);
+				child.material = moonMat;
 			}
 		}
 
-		if (!child.userData.hasOwnProperty('data')) return;
+		const ud = Utils.userData(child);
+		if (ud.data === undefined) return;
 
-		if (child.userData.data === 'physics' && child.userData.hasOwnProperty('type'))
+		if (ud.data === 'physics' && ud.type !== undefined && child instanceof Mesh)
 		{
-			// Convex doesn't work! Stick to boxes!
-			if (child.userData.type === 'box')
+			// The physics markers double as the body's transform node -
+			// their position/rotation is the body pose, their scale the
+			// shape size (boxes / cylinders) or gets baked into the
+			// triangle soup (trimesh).
+			if (ud.type === 'box')
 			{
-				const phys = new BoxCollider({ size: new THREE.Vector3(child.scale.x, child.scale.y, child.scale.z) });
-				phys.body.position.copy(new CANNON.Vec3(child.position.x, child.position.y, child.position.z));
-				phys.body.quaternion.copy(new CANNON.Quaternion(child.quaternion.x, child.quaternion.y, child.quaternion.z, child.quaternion.w));
-				phys.body.updateAABB();
-
-				phys.body.shapes.forEach((shape) =>
-				{
-					shape.collisionFilterMask = ~CollisionGroups.TrimeshColliders;
+				new BoxCollider(scene, {
+					size: child.scaling.clone(),
+					node: child,
+					collisionFilterMask: ~CollisionGroups.TrimeshColliders,
 				});
-
-				world.physicsWorld.addBody(phys.body);
 			}
-			else if (child.userData.type === 'trimesh')
+			else if (ud.type === 'trimesh')
 			{
-				const phys = new TrimeshCollider(child, {});
-				world.physicsWorld.addBody(phys.body);
+				new TrimeshCollider(scene, child, {});
 			}
-			else if (child.userData.type === 'cylinder')
+			else if (ud.type === 'cylinder')
 			{
 				// socketControl-style cylinder shape. Authored
 				// scale.x is read as radius, scale.y as height
 				// (Sketchbook convention - empties are
 				// uniformly scaled and rotated).
-				const phys = new CylinderCollider({
-					radius: child.scale.x,
-					height: child.scale.y,
+				new CylinderCollider(scene, {
+					radius: child.scaling.x,
+					height: child.scaling.y,
 					segment: 12,
+					node: child,
+					collisionFilterMask: ~CollisionGroups.TrimeshColliders,
 				});
-				phys.body.position.copy(new CANNON.Vec3(child.position.x, child.position.y, child.position.z));
-				phys.body.quaternion.copy(new CANNON.Quaternion(child.quaternion.x, child.quaternion.y, child.quaternion.z, child.quaternion.w));
-				phys.body.updateAABB();
-				phys.body.shapes.forEach((shape) =>
-				{
-					shape.collisionFilterMask = ~CollisionGroups.TrimeshColliders;
-				});
-				world.physicsWorld.addBody(phys.body);
 			}
 
-			child.visible = false;
+			// Hidden collision geometry must not cast shadows either. The
+			// glTF loader splits multi-material markers into one child
+			// mesh per primitive, so hide those too.
+			world.sky.unregisterShadowCaster(child);
+			child.isVisible = false;
+			child.isPickable = false;
+			for (const primitive of child.getChildMeshes(false))
+			{
+				primitive.isVisible = false;
+				primitive.isPickable = false;
+			}
 		}
 
-		if (child.userData.data === 'path')
+		if (ud.data === 'path')
 		{
-			world.paths.push(new Path(child));
+			world.paths.push(new Path(child as any));
 		}
 
-		if (child.userData.data === 'scenario')
+		if (ud.data === 'scenario')
 		{
-			world.scenarios.push(new Scenario(child, world));
+			world.scenarios.push(new Scenario(child as any, world));
 		}
 
 		// socketControl-style positional audio source. The map
 		// marker carries the audio asset path; Speaker handles
 		// the autoplay-policy gating so multiple sources start
 		// together on the first user gesture.
-		if (child.userData.data === 'speaker' && typeof child.userData.audio === 'string')
+		if (ud.data === 'speaker' && typeof ud.audio === 'string')
 		{
-			const sp = new Speaker(child.userData.audio, world);
-			sp.position.copy(child.getWorldPosition(new THREE.Vector3()));
+			const sp = new Speaker(ud.audio, world);
+			Utils.getWorldPosition(child as any, _worldPos);
+			sp.position.copyFrom(_worldPos);
 			world.add(sp);
 		}
 	});
 
-	world.graphicsWorld.add(gltf.scene);
+	world.addNode(model.root);
 
 	// Hand-placed NPCs around the Inthenew default spawn - gives the
 	// world some visible occupants without authoring markers in

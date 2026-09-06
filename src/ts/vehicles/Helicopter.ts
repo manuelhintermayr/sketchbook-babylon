@@ -1,45 +1,46 @@
-import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
-import * as Utils from '../core/FunctionLibrary';
+import { Axis, PhysicsBody, Quaternion, Space, TransformNode, Vector3 } from '@babylonjs/core';
 
+import * as Utils from '../core/FunctionLibrary';
 import { Vehicle } from './Vehicle';
 import { IControllable } from '../interfaces/IControllable';
 import { IWorldEntity } from '../interfaces/IWorldEntity';
 import { KeyBinding } from '../core/KeyBinding';
-import { World } from '../world/World';
 import { EntityType } from '../enums/EntityType';
 import { ENGINE_PROFILES } from '../world/audio/EngineSound';
 import { commonVehicleControls } from '../core/CommonControls';
 import { t } from '../i18n';
+import { LoadedModel } from '../core/LoadingManager';
 
 // Module-scoped scratch - physicsPreStep runs at 60Hz per heli, so
-// every `new Vector3` here would cost 9 allocations × frame × instance.
+// every `new Vector3` here would cost 9 allocations x frame x instance.
 // Reuse these instead. Constants ending in _AXIS are immutable seeds
 // that we copy() into a working scratch before applying transforms.
-const _quat = new THREE.Quaternion();
-const _right = new THREE.Vector3();
-const _up = new THREE.Vector3();
-const _forward = new THREE.Vector3();
-const _vertDamping = new THREE.Vector3();
-const _vertStab = new THREE.Vector3();
-const _rotStabVelocity = new THREE.Quaternion();
-const _rotStabEuler = new THREE.Euler();
-const _GLOBAL_UP = new THREE.Vector3(0, 1, 0);
-const _RIGHT_AXIS = new THREE.Vector3(1, 0, 0);
-const _UP_AXIS = new THREE.Vector3(0, 1, 0);
-const _FORWARD_AXIS = new THREE.Vector3(0, 0, 1);
+const _quat = new Quaternion();
+const _right = new Vector3();
+const _up = new Vector3();
+const _forward = new Vector3();
+const _velocity = new Vector3();
+const _angVel = new Vector3();
+const _vertDamping = new Vector3();
+const _vertStab = new Vector3();
+const _rotStabVelocity = new Quaternion();
+const _rotStabEuler = new Vector3();
+const _GLOBAL_UP = new Vector3(0, 1, 0);
+const _RIGHT_AXIS = new Vector3(1, 0, 0);
+const _UP_AXIS = new Vector3(0, 1, 0);
+const _FORWARD_AXIS = new Vector3(0, 0, 1);
 
 export class Helicopter extends Vehicle implements IControllable, IWorldEntity
 {
 	public entityType: EntityType = EntityType.Helicopter;
-	public rotors: THREE.Object3D[] = [];
+	public rotors: TransformNode[] = [];
 	private enginePower: number = 0;
 
-	constructor(gltf: any)
+	constructor(model: LoadedModel)
 	{
-		super(gltf);
+		super(model);
 
-		this.readHelicopterData(gltf);
+		this.readHelicopterData(model);
 
 		this.actions = {
 			'ascend': new KeyBinding('ShiftLeft'),
@@ -64,7 +65,7 @@ export class Helicopter extends Vehicle implements IControllable, IWorldEntity
 
 	public noDirectionPressed(): boolean
 	{
-		let result = 
+		let result =
 		!this.actions.ascend.isPressed &&
 		!this.actions.descend.isPressed;
 
@@ -74,7 +75,7 @@ export class Helicopter extends Vehicle implements IControllable, IWorldEntity
 	public update(timeStep: number): void
 	{
 		super.update(timeStep);
-		
+
 		// Rotors visuals
 		if (this.controllingCharacter !== undefined)
 		{
@@ -89,7 +90,7 @@ export class Helicopter extends Vehicle implements IControllable, IWorldEntity
 
 		this.rotors.forEach((rotor) =>
 		{
-			rotor.rotateX(this.enginePower * timeStep * 30);
+			rotor.rotate(Axis.X, this.enginePower * timeStep * 30, Space.LOCAL);
 		});
 	}
 
@@ -107,122 +108,123 @@ export class Helicopter extends Vehicle implements IControllable, IWorldEntity
 		}
 	}
 
-	public physicsPreStep(body: CANNON.Body, heli: Helicopter): void
+	public physicsPreStep(body: PhysicsBody, heli: Helicopter): void
 	{
-		_quat.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
-		_right.copy(_RIGHT_AXIS).applyQuaternion(_quat);
-		_up.copy(_UP_AXIS).applyQuaternion(_quat);
-		_forward.copy(_FORWARD_AXIS).applyQuaternion(_quat);
+		_quat.copyFrom(this.rotationQuaternion);
+		_right.copyFrom(_RIGHT_AXIS).applyRotationQuaternionInPlace(_quat);
+		_up.copyFrom(_UP_AXIS).applyRotationQuaternionInPlace(_quat);
+		_forward.copyFrom(_FORWARD_AXIS).applyRotationQuaternionInPlace(_quat);
+
+		body.getLinearVelocityToRef(_velocity);
+		body.getAngularVelocityToRef(_angVel);
 
 		// Throttle
 		if (heli.actions.ascend.isPressed)
 		{
-			body.velocity.x += _up.x * 0.15 * this.enginePower;
-			body.velocity.y += _up.y * 0.15 * this.enginePower;
-			body.velocity.z += _up.z * 0.15 * this.enginePower;
+			_velocity.x += _up.x * 0.15 * this.enginePower;
+			_velocity.y += _up.y * 0.15 * this.enginePower;
+			_velocity.z += _up.z * 0.15 * this.enginePower;
 		}
 		if (heli.actions.descend.isPressed)
 		{
-			body.velocity.x -= _up.x * 0.15 * this.enginePower;
-			body.velocity.y -= _up.y * 0.15 * this.enginePower;
-			body.velocity.z -= _up.z * 0.15 * this.enginePower;
+			_velocity.x -= _up.x * 0.15 * this.enginePower;
+			_velocity.y -= _up.y * 0.15 * this.enginePower;
+			_velocity.z -= _up.z * 0.15 * this.enginePower;
 		}
 
-		// Vertical stabilization. Inline the gravity-vector length math
-		// instead of allocating a CANNON.Vec3 to call .length() on.
+		// Vertical stabilization
 		const gravity = heli.world.physicsWorld.gravity;
 		let gravityCompensation = Math.sqrt(gravity.x * gravity.x + gravity.y * gravity.y + gravity.z * gravity.z);
 		gravityCompensation *= heli.world.physicsFrameTime;
 		gravityCompensation *= 0.98;
-		const dot = _GLOBAL_UP.dot(_up);
-		gravityCompensation *= Math.sqrt(THREE.MathUtils.clamp(dot, 0, 1));
+		const dot = Vector3.Dot(_GLOBAL_UP, _up);
+		gravityCompensation *= Math.sqrt(Utils.clamp(dot, 0, 1));
 
-		_vertDamping.set(0, body.velocity.y, 0).multiplyScalar(-0.01);
-		_vertStab.copy(_up).multiplyScalar(gravityCompensation).add(_vertDamping).multiplyScalar(heli.enginePower);
+		_vertDamping.set(0, _velocity.y, 0).scaleInPlace(-0.01);
+		_vertStab.copyFrom(_up).scaleInPlace(gravityCompensation).addInPlace(_vertDamping).scaleInPlace(heli.enginePower);
 
-		body.velocity.x += _vertStab.x;
-		body.velocity.y += _vertStab.y;
-		body.velocity.z += _vertStab.z;
+		_velocity.x += _vertStab.x;
+		_velocity.y += _vertStab.y;
+		_velocity.z += _vertStab.z;
 
 		// Positional damping
-		body.velocity.x *= THREE.MathUtils.lerp(1, 0.995, this.enginePower);
-		body.velocity.z *= THREE.MathUtils.lerp(1, 0.995, this.enginePower);
+		_velocity.x *= Utils.lerp(1, 0.995, this.enginePower);
+		_velocity.z *= Utils.lerp(1, 0.995, this.enginePower);
 
 		// Rotation stabilization
 		if (this.controllingCharacter !== undefined)
 		{
-			_rotStabVelocity.setFromUnitVectors(_up, _GLOBAL_UP);
+			Quaternion.FromUnitVectorsToRef(_up, _GLOBAL_UP, _rotStabVelocity);
 			_rotStabVelocity.x *= 0.3;
 			_rotStabVelocity.y *= 0.3;
 			_rotStabVelocity.z *= 0.3;
 			_rotStabVelocity.w *= 0.3;
-			_rotStabEuler.setFromQuaternion(_rotStabVelocity);
+			Utils.eulerFromQuaternion(_rotStabVelocity, 'XYZ', _rotStabEuler);
 
-			body.angularVelocity.x += _rotStabEuler.x * this.enginePower;
-			body.angularVelocity.y += _rotStabEuler.y * this.enginePower;
-			body.angularVelocity.z += _rotStabEuler.z * this.enginePower;
+			_angVel.x += _rotStabEuler.x * this.enginePower;
+			_angVel.y += _rotStabEuler.y * this.enginePower;
+			_angVel.z += _rotStabEuler.z * this.enginePower;
 		}
 
 		// Pitch
 		if (heli.actions.pitchUp.isPressed)
 		{
-			body.angularVelocity.x -= _right.x * 0.07 * this.enginePower;
-			body.angularVelocity.y -= _right.y * 0.07 * this.enginePower;
-			body.angularVelocity.z -= _right.z * 0.07 * this.enginePower;
+			_angVel.x -= _right.x * 0.07 * this.enginePower;
+			_angVel.y -= _right.y * 0.07 * this.enginePower;
+			_angVel.z -= _right.z * 0.07 * this.enginePower;
 		}
 		if (heli.actions.pitchDown.isPressed)
 		{
-			body.angularVelocity.x += _right.x * 0.07 * this.enginePower;
-			body.angularVelocity.y += _right.y * 0.07 * this.enginePower;
-			body.angularVelocity.z += _right.z * 0.07 * this.enginePower;
+			_angVel.x += _right.x * 0.07 * this.enginePower;
+			_angVel.y += _right.y * 0.07 * this.enginePower;
+			_angVel.z += _right.z * 0.07 * this.enginePower;
 		}
 
 		// Yaw
 		if (heli.actions.yawLeft.isPressed)
 		{
-			body.angularVelocity.x += _up.x * 0.07 * this.enginePower;
-			body.angularVelocity.y += _up.y * 0.07 * this.enginePower;
-			body.angularVelocity.z += _up.z * 0.07 * this.enginePower;
+			_angVel.x += _up.x * 0.07 * this.enginePower;
+			_angVel.y += _up.y * 0.07 * this.enginePower;
+			_angVel.z += _up.z * 0.07 * this.enginePower;
 		}
 		if (heli.actions.yawRight.isPressed)
 		{
-			body.angularVelocity.x -= _up.x * 0.07 * this.enginePower;
-			body.angularVelocity.y -= _up.y * 0.07 * this.enginePower;
-			body.angularVelocity.z -= _up.z * 0.07 * this.enginePower;
+			_angVel.x -= _up.x * 0.07 * this.enginePower;
+			_angVel.y -= _up.y * 0.07 * this.enginePower;
+			_angVel.z -= _up.z * 0.07 * this.enginePower;
 		}
 
 		// Roll
 		if (heli.actions.rollLeft.isPressed)
 		{
-			body.angularVelocity.x -= _forward.x * 0.07 * this.enginePower;
-			body.angularVelocity.y -= _forward.y * 0.07 * this.enginePower;
-			body.angularVelocity.z -= _forward.z * 0.07 * this.enginePower;
+			_angVel.x -= _forward.x * 0.07 * this.enginePower;
+			_angVel.y -= _forward.y * 0.07 * this.enginePower;
+			_angVel.z -= _forward.z * 0.07 * this.enginePower;
 		}
 		if (heli.actions.rollRight.isPressed)
 		{
-			body.angularVelocity.x += _forward.x * 0.07 * this.enginePower;
-			body.angularVelocity.y += _forward.y * 0.07 * this.enginePower;
-			body.angularVelocity.z += _forward.z * 0.07 * this.enginePower;
+			_angVel.x += _forward.x * 0.07 * this.enginePower;
+			_angVel.y += _forward.y * 0.07 * this.enginePower;
+			_angVel.z += _forward.z * 0.07 * this.enginePower;
 		}
 
 		// Angular damping
-		body.angularVelocity.x *= 0.97;
-		body.angularVelocity.y *= 0.97;
-		body.angularVelocity.z *= 0.97;
+		_angVel.x *= 0.97;
+		_angVel.y *= 0.97;
+		_angVel.z *= 0.97;
+
+		body.setLinearVelocity(_velocity);
+		body.setAngularVelocity(_angVel);
 	}
 
-	public readHelicopterData(gltf: any): void
+	public readHelicopterData(model: LoadedModel): void
 	{
-		gltf.scene.traverse((child) => {
-			if (child.hasOwnProperty('userData'))
+		Utils.traverse(model.root, (child) => {
+			if (!(child instanceof TransformNode)) return;
+			const ud = Utils.userData(child);
+			if (ud.data === 'rotor')
 			{
-				if (child.userData.hasOwnProperty('data'))
-				{
-					if (child.userData.data === 'rotor')
-					{
-						this.rotors.push(child);
-					}
-				}
+				this.rotors.push(child);
 			}
 		});
 	}

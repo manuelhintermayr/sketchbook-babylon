@@ -1,5 +1,4 @@
-import * as CANNON from 'cannon-es';
-import * as THREE from 'three';
+import { PhysicsBody, Quaternion, TransformNode, Vector3 } from '@babylonjs/core';
 
 import { Vehicle } from './Vehicle';
 import { IControllable } from '../interfaces/IControllable';
@@ -10,11 +9,20 @@ import { EntityType } from '../enums/EntityType';
 import { ENGINE_PROFILES } from '../world/audio/EngineSound';
 import { commonVehicleControls } from '../core/CommonControls';
 import { t } from '../i18n';
+import { LoadedModel } from '../core/LoadingManager';
 
-// Ported from Inthenew/Sketchbook (MIT). The boat reuses the cannon
-// raycast vehicle base for collision and wheel contacts, but drives
-// itself by writing body.velocity directly in physicsPreStep and rides
-// the visible waves by overriding body.position.y from
+const _velocity = new Vector3();
+const _angVel = new Vector3();
+const _worldForward = new Vector3();
+const _velocityNorm = new Vector3();
+const _forward = new Vector3();
+const _euler = new Vector3();
+const _FORWARD_AXIS = new Vector3(0, 0, 1);
+
+// Ported from Inthenew/Sketchbook (MIT). The boat reuses the raycast
+// vehicle base for collision and wheel contacts, but drives itself by
+// writing the body velocity directly in physicsPreStep and rides the
+// visible waves by overriding the chassis y from
 // world.ocean.getWaveHeightAt(). Pitch and roll are forced to zero so
 // the hull stays level on top of the wave grid.
 export class Boat extends Vehicle implements IControllable
@@ -31,16 +39,16 @@ export class Boat extends Vehicle implements IControllable
 	public accelerationIncrement = 0.5;
 	public turnSpeed = 100;
 
-	private steeringWheel: THREE.Object3D | null = null;
+	private steeringWheel: TransformNode | null = null;
 	private steeringSimulator: SpringSimulator;
 	private gear = 1;
 	private shiftTime = 0.2;
 	private shiftTimer = 0;
 	private characterWantsToExit = false;
 
-	constructor(gltf: any)
+	constructor(model: LoadedModel)
 	{
-		super(gltf, {
+		super(model, {
 			radius: 0.25,
 			suspensionStiffness: 20,
 			suspensionRestLength: 0.35,
@@ -50,7 +58,7 @@ export class Boat extends Vehicle implements IControllable
 			dampingCompression: 2,
 			rollInfluence: 0.8,
 		});
-		this.readBoatData(gltf);
+		this.readBoatData(model);
 
 		this.actions = {
 			throttle: new KeyBinding('KeyW'),
@@ -71,6 +79,8 @@ export class Boat extends Vehicle implements IControllable
 		this.recovery.flipRecoveryEnabled = false;
 
 		this.engineSoundProfile = ENGINE_PROFILES.boat;
+
+		this.collision.setAngularDamping(0.9);
 	}
 
 	public noDirectionPressed(): boolean
@@ -85,13 +95,13 @@ export class Boat extends Vehicle implements IControllable
 	{
 		super.update(timeStep);
 
-		// The cannon raycast vehicle wants wheels for collision, but a boat
+		// The raycast vehicle wants wheels for collision, but a boat
 		// has none visually - hide the wheel objects every frame.
-		this.wheels.forEach(wheel => { wheel.wheelObject.visible = false; });
+		this.wheels.forEach(wheel => { wheel.wheelObject.setEnabled(false); });
 
 		// Gear logic is retained to drive transmission shifts; engine force
-		// itself is left at zero - Boat.physicsPreStep writes body.velocity
-		// directly via goForward() instead.
+		// itself is left at zero - Boat.physicsPreStep writes the body
+		// velocity directly via goForward() instead.
 		const maxGears = 5;
 		const gearsMaxSpeeds: Record<string, number> = {
 			'R': (this.forwardSpeed / 10) * -4,
@@ -125,7 +135,7 @@ export class Boat extends Vehicle implements IControllable
 		this.setSteeringValue(this.steeringSimulator.position);
 		if (this.steeringWheel)
 		{
-			this.steeringWheel.rotation.z = -this.steeringSimulator.position * 2;
+			Utils.setEulerComponent(this.steeringWheel, 'z', -this.steeringSimulator.position * 2);
 		}
 
 		if (this.characterWantsToExit
@@ -150,35 +160,37 @@ export class Boat extends Vehicle implements IControllable
 		this.applyEngineForce(0);
 	}
 
-	private goForward(maxSpeed: number, body: CANNON.Body, forward: boolean): void
+	// Writes the horizontal components of `velocity` in place.
+	private goForward(maxSpeed: number, velocity: Vector3, forward: boolean): void
 	{
 		// If the chassis is touching ground (boat ran aground), let the
 		// raycast vehicle handle physics normally.
 		if (this.rayCastVehicle.numWheelsOnGround >= 1) return;
 
-		const localForward = new CANNON.Vec3(0, 0, forward ? 1 : -1);
-		const worldForward = body.quaternion.vmult(localForward);
+		_worldForward.set(0, 0, forward ? 1 : -1).applyRotationQuaternionInPlace(this.rotationQuaternion);
 
-		let currentSpeed = body.velocity.dot(worldForward);
+		let currentSpeed = Vector3.Dot(velocity, _worldForward);
 		if (currentSpeed < maxSpeed) currentSpeed += this.accelerationIncrement;
 
-		worldForward.scale(currentSpeed, worldForward);
-		body.velocity.x = worldForward.x;
-		body.velocity.z = worldForward.z;
+		_worldForward.scaleInPlace(currentSpeed);
+		velocity.x = _worldForward.x;
+		velocity.z = _worldForward.z;
 	}
 
-	public physicsPreStep(body: CANNON.Body, _boat: Boat): void
+	public physicsPreStep(body: PhysicsBody, _boat: Boat): void
 	{
-		body.angularDamping = 0.9;
 		const dt = 1 / 60;
+
+		body.getLinearVelocityToRef(_velocity);
+		body.getAngularVelocityToRef(_angVel);
 
 		if (this.actions.throttle.isPressed && !this.actions.reverse.isPressed)
 		{
-			this.goForward(this.forwardSpeed, body, true);
+			this.goForward(this.forwardSpeed, _velocity, true);
 		}
 		else if (this.actions.reverse.isPressed && !this.actions.throttle.isPressed)
 		{
-			this.goForward(this.reverseSpeed, body, false);
+			this.goForward(this.reverseSpeed, _velocity, false);
 		}
 
 		// Hide doors that don't belong to a boat hull.
@@ -186,29 +198,27 @@ export class Boat extends Vehicle implements IControllable
 		{
 			if (seat.door)
 			{
-				seat.door.doorObject.visible = false;
+				seat.door.doorObject.setEnabled(false);
 				seat.door.preStepCallback();
 			}
 		});
 
 		// Steering target with drift-correction smoothing.
-		const velocity = new CANNON.Vec3().copy(body.velocity);
-		velocity.normalize();
-		const driftCorrection = Utils.getSignedAngleBetweenVectors(
-			Utils.threeVector(velocity),
-			new THREE.Vector3(0, 0, 1).applyQuaternion(Utils.threeQuat(body.quaternion)),
-		);
+		_velocityNorm.copyFrom(_velocity).normalize();
+		_forward.copyFrom(_FORWARD_AXIS).applyRotationQuaternionInPlace(this.rotationQuaternion);
+		this._speed = Vector3.Dot(_velocity, _forward);
+		const driftCorrection = Utils.getSignedAngleBetweenVectors(_velocityNorm, _forward);
 		const maxSteerVal = 0.8;
-		const speedFactor = THREE.MathUtils.clamp(this.speed * 0.3, 1, Number.MAX_VALUE);
+		const speedFactor = Utils.clamp(this.speed * 0.3, 1, Number.MAX_VALUE);
 		if (this.actions.right.isPressed)
 		{
 			const steering = Math.min(-maxSteerVal / speedFactor, -driftCorrection);
-			this.steeringSimulator.target = THREE.MathUtils.clamp(steering, -maxSteerVal, maxSteerVal);
+			this.steeringSimulator.target = Utils.clamp(steering, -maxSteerVal, maxSteerVal);
 		}
 		else if (this.actions.left.isPressed)
 		{
 			const steering = Math.max(maxSteerVal / speedFactor, -driftCorrection);
-			this.steeringSimulator.target = THREE.MathUtils.clamp(steering, -maxSteerVal, maxSteerVal);
+			this.steeringSimulator.target = Utils.clamp(steering, -maxSteerVal, maxSteerVal);
 		}
 		else
 		{
@@ -218,30 +228,29 @@ export class Boat extends Vehicle implements IControllable
 		// Yaw-only orientation: rebuild the quaternion from a YXZ Euler with
 		// pitch/roll forced to zero, then null the X/Z angular velocity so
 		// the solver can't reintroduce them on the next step.
-		const currentQuat = Utils.threeQuat(body.quaternion);
-		const euler = new THREE.Euler().setFromQuaternion(currentQuat, 'YXZ');
-		euler.y += this.steeringSimulator.position * this.turnSpeed * dt * (Math.PI / 180);
-		euler.x = 0;
-		euler.z = 0;
-		const newQuat = new THREE.Quaternion().setFromEuler(euler);
-		body.quaternion.set(newQuat.x, newQuat.y, newQuat.z, newQuat.w);
-		body.angularVelocity.x = 0;
-		body.angularVelocity.z = 0;
+		Utils.eulerFromQuaternion(this.rotationQuaternion, 'YXZ', _euler);
+		const yaw = _euler.y + this.steeringSimulator.position * this.turnSpeed * dt * (Math.PI / 180);
+		Quaternion.RotationYawPitchRollToRef(yaw, 0, 0, this.rotationQuaternion);
+		_angVel.x = 0;
+		_angVel.z = 0;
 
 		// Ride the wave: lerp the chassis y toward the sampled wave height
-		// at the boat's xz, leaving the cannon solver to handle xz physics.
+		// at the boat's xz, leaving the solver to handle xz physics.
 		const ocean = this.world?.ocean;
 		if (ocean)
 		{
 			const time = ocean.getElapsedTime();
-			const sampled = ocean.getWaveHeightAt(body.position.x, body.position.z, time);
+			const sampled = ocean.getWaveHeightAt(this.position.x, this.position.z, time);
 			if (sampled !== 'inner-zone')
 			{
 				const lerpFactor = 0.6;
-				body.position.y += (sampled - body.position.y) * lerpFactor;
-				body.velocity.y = Math.max(body.velocity.y, 0);
+				this.position.y += (sampled - this.position.y) * lerpFactor;
+				_velocity.y = Math.max(_velocity.y, 0);
 			}
 		}
+
+		body.setLinearVelocity(_velocity);
+		body.setAngularVelocity(_angVel);
 	}
 
 	public onInputChange(): void
@@ -286,13 +295,15 @@ export class Boat extends Vehicle implements IControllable
 		]);
 	}
 
-	public readBoatData(gltf: any): void
+	public readBoatData(model: LoadedModel): void
 	{
-		gltf.scene.traverse((child: THREE.Object3D) =>
+		Utils.traverse(model.root, (child) =>
 		{
-			if (child.userData && child.userData.data === 'steering_wheel')
+			if (!(child instanceof TransformNode)) return;
+			const ud = Utils.userData(child);
+			if (ud.data === 'steering_wheel')
 			{
-				child.visible = false;
+				child.setEnabled(false);
 				this.steeringWheel = child;
 			}
 		});

@@ -1,5 +1,16 @@
-import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
+import {
+	AnimationGroup,
+	Color3,
+	Material,
+	Mesh,
+	MeshBuilder,
+	PhysicsBody,
+	PhysicsRaycastResult,
+	Quaternion,
+	StandardMaterial,
+	TransformNode,
+	Vector3,
+} from '@babylonjs/core';
 import * as _ from 'lodash';
 import * as Utils from '../core/FunctionLibrary';
 
@@ -26,36 +37,39 @@ import { VehicleEntryInstance } from './VehicleEntryInstance';
 import { SeatType } from '../enums/SeatType';
 import { GroundImpactData } from './GroundImpactData';
 import { ClosestObjectFinder } from '../core/ClosestObjectFinder';
-import { Object3D } from 'three';
 import { EntityType } from '../enums/EntityType';
 import { UpdateOrder } from '../enums/UpdateOrder';
 import { commonGlobalControls } from '../core/CommonControls';
 import { t } from '../i18n';
 import * as PhysicsBridge from './CharacterPhysicsBridge';
 import * as InputBridge from './CharacterInputBridge';
+import { LoadedModel } from '../core/LoadingManager';
+import { PhysicsWorld } from '../physics/PhysicsWorld';
 
 // Module-scoped scratch for springRotation - reused across all
 // characters in the scene. Larger physics + raycast scratches moved
 // to CharacterPhysicsBridge alongside the physics step functions.
-const _Y_AXIS = new THREE.Vector3(0, 1, 0);
+const _Y_AXIS = new Vector3(0, 1, 0);
+const _lookTarget = new Vector3();
+const _worldPos = new Vector3();
 
-export class Character extends THREE.Object3D implements IWorldEntity
+export class Character extends TransformNode implements IWorldEntity
 {
 	public updateOrder: number = UpdateOrder.CharacterPhysics;
 	public entityType: EntityType = EntityType.Character;
 
 	public height: number = 0;
-	public tiltContainer: THREE.Group;
-	public modelContainer: THREE.Group;
-	public materials: THREE.Material[] = [];
-	public mixer: THREE.AnimationMixer;
-	public animations: any[];
+	public tiltContainer: TransformNode;
+	public modelContainer: TransformNode;
+	public materials: Material[] = [];
+	public animationGroups: AnimationGroup[] = [];
+	public model: LoadedModel;
 
 	// Movement
-	public acceleration: THREE.Vector3 = new THREE.Vector3();
-	public velocity: THREE.Vector3 = new THREE.Vector3();
-	public arcadeVelocityInfluence: THREE.Vector3 = new THREE.Vector3();
-	public velocityTarget: THREE.Vector3 = new THREE.Vector3();
+	public acceleration: Vector3 = new Vector3();
+	public velocity: Vector3 = new Vector3();
+	public arcadeVelocityInfluence: Vector3 = new Vector3();
+	public velocityTarget: Vector3 = new Vector3();
 	public arcadeVelocityIsAdditive: boolean = false;
 
 	public defaultVelocitySimulatorDamping: number = 0.8;
@@ -63,25 +77,25 @@ export class Character extends THREE.Object3D implements IWorldEntity
 	public velocitySimulator: VectorSpringSimulator;
 	public moveSpeed: number = 4;
 	public angularVelocity: number = 0;
-	public orientation: THREE.Vector3 = new THREE.Vector3(0, 0, 1);
-	public orientationTarget: THREE.Vector3 = new THREE.Vector3(0, 0, 1);
+	public orientation: Vector3 = new Vector3(0, 0, 1);
+	public orientationTarget: Vector3 = new Vector3(0, 0, 1);
 	public defaultRotationSimulatorDamping: number = 0.5;
 	public defaultRotationSimulatorMass: number = 10;
 	public rotationSimulator: RelativeSpringSimulator;
-	public viewVector: THREE.Vector3;
+	public viewVector: Vector3;
 	public actions: { [action: string]: KeyBinding };
 	public characterCapsule: CapsuleCollider;
-	
+
 	// Ray casting
-	public rayResult: CANNON.RaycastResult = new CANNON.RaycastResult();
+	public rayResult: PhysicsRaycastResult = new PhysicsRaycastResult();
 	public rayHasHit: boolean = false;
 	public rayCastLength: number = 0.57;
 	public raySafeOffset: number = 0.03;
 	public wantsToJump: boolean = false;
 	public initJumpSpeed: number = -1;
 	public groundImpactData: GroundImpactData = new GroundImpactData();
-	public raycastBox: THREE.Mesh;
-	
+	public raycastBox: Mesh;
+
 	public world: World;
 	public charState: ICharacterState;
 	public behaviour: ICharacterAI;
@@ -107,32 +121,33 @@ export class Character extends THREE.Object3D implements IWorldEntity
 	public controlledObject: IControllable;
 	public occupyingSeat: VehicleSeat = null;
 	public vehicleEntryInstance: VehicleEntryInstance = null;
-	
+
 	private physicsEnabled: boolean = true;
+	private currentAnimation: AnimationGroup | null = null;
 
-	constructor(gltf: any)
+	constructor(model: LoadedModel)
 	{
-		super();
+		super('character', model.scene);
+		this.rotationQuaternion = Quaternion.Identity();
 
-		this.readCharacterData(gltf);
-		this.setAnimations(gltf.animations);
+		this.model = model;
+		this.readCharacterData(model);
+		this.setAnimations(model.animationGroups);
 
 		// The visuals group is centered for easy character tilting
-		this.tiltContainer = new THREE.Group();
-		this.add(this.tiltContainer);
+		this.tiltContainer = new TransformNode('tiltContainer', model.scene);
+		this.tiltContainer.parent = this;
 
 		// Model container is used to reliably ground the character, as animation can alter the position of the model itself
-		this.modelContainer = new THREE.Group();
+		this.modelContainer = new TransformNode('modelContainer', model.scene);
 		this.modelContainer.position.y = -0.57;
-		this.tiltContainer.add(this.modelContainer);
-		this.modelContainer.add(gltf.scene);
-
-		this.mixer = new THREE.AnimationMixer(gltf.scene);
+		this.modelContainer.parent = this.tiltContainer;
+		model.root.parent = this.modelContainer;
 
 		this.velocitySimulator = new VectorSpringSimulator(60, this.defaultVelocitySimulatorMass, this.defaultVelocitySimulatorDamping);
 		this.rotationSimulator = new RelativeSpringSimulator(60, this.defaultRotationSimulatorMass, this.defaultRotationSimulatorDamping);
 
-		this.viewVector = new THREE.Vector3();
+		this.viewVector = new Vector3();
 
 		// Actions
 		this.actions = {
@@ -151,43 +166,37 @@ export class Character extends THREE.Object3D implements IWorldEntity
 		};
 
 		// Physics
-		// Player Capsule
-		this.characterCapsule = new CapsuleCollider({
+		// Player Capsule. Lives in its own collision group so the feet
+		// raycast can skip it, and ignores the vehicles' sphere shapes
+		// (TrimeshColliders group) the same way the cannon version did.
+		this.characterCapsule = new CapsuleCollider(model.scene, {
 			mass: 1,
-			position: new CANNON.Vec3(),
+			position: new Vector3(),
 			height: 0.5,
 			radius: 0.25,
 			segments: 8,
-			friction: 0.0
+			friction: 0.0,
+			collisionFilterGroup: CollisionGroups.Characters,
+			collisionFilterMask: ~CollisionGroups.TrimeshColliders,
+			allowSleep: false,
 		});
-		this.characterCapsule.body.shapes.forEach((shape) => {
-			// tslint:disable-next-line: no-bitwise
-			shape.collisionFilterMask = ~CollisionGroups.TrimeshColliders;
-		});
-		this.characterCapsule.body.allowSleep = false;
-
-		// Move character to different collision group for raycasting
-		this.characterCapsule.body.collisionFilterGroup = 2;
-
-		// Disable character rotation
-		this.characterCapsule.body.fixedRotation = true;
-		this.characterCapsule.body.updateMassProperties();
 
 		// Ray cast debug
-		const boxGeo = new THREE.BoxGeometry(0.1, 0.1, 0.1);
-		const boxMat = new THREE.MeshLambertMaterial({
-			color: 0xff0000
-		});
-		this.raycastBox = new THREE.Mesh(boxGeo, boxMat);
-		this.raycastBox.visible = false;
+		this.raycastBox = MeshBuilder.CreateBox('raycastBox', { size: 0.1 }, model.scene);
+		const boxMat = new StandardMaterial('raycastBoxMaterial', model.scene);
+		boxMat.diffuseColor = Color3.Red();
+		boxMat.emissiveColor = Color3.Red();
+		this.raycastBox.material = boxMat;
+		this.raycastBox.isPickable = false;
+		this.raycastBox.setEnabled(false);
 
 		// States
 		this.setState(new Idle(this));
 	}
 
-	public setAnimations(animations: []): void
+	public setAnimations(animationGroups: AnimationGroup[]): void
 	{
-		this.animations = animations;
+		this.animationGroups = animationGroups;
 	}
 
 	public setArcadeVelocityInfluence(x: number, y: number = x, z: number = x): void
@@ -195,14 +204,14 @@ export class Character extends THREE.Object3D implements IWorldEntity
 		this.arcadeVelocityInfluence.set(x, y, z);
 	}
 
-	public setViewVector(vector: THREE.Vector3): void
+	public setViewVector(vector: Vector3): void
 	{
-		this.viewVector.copy(vector).normalize();
+		this.viewVector.copyFrom(vector).normalize();
 	}
 
 	/**
 	 * Set state to the player. Pass state class (function) name.
-	 * @param {function} State 
+	 * @param {function} State
 	 */
 	public setState(state: ICharacterState): void
 	{
@@ -214,9 +223,7 @@ export class Character extends THREE.Object3D implements IWorldEntity
 	{
 		if (this.physicsEnabled)
 		{
-			this.characterCapsule.body.previousPosition = new CANNON.Vec3(x, y, z);
-			this.characterCapsule.body.position = new CANNON.Vec3(x, y, z);
-			this.characterCapsule.body.interpolatedPosition = new CANNON.Vec3(x, y, z);
+			this.characterCapsule.node.position.set(x, y, z);
 		}
 		else
 		{
@@ -232,9 +239,7 @@ export class Character extends THREE.Object3D implements IWorldEntity
 		this.velocity.y = 0;
 		this.velocity.z = 0;
 
-		this.characterCapsule.body.velocity.x = 0;
-		this.characterCapsule.body.velocity.y = 0;
-		this.characterCapsule.body.velocity.z = 0;
+		PhysicsWorld.zeroVelocity(this.characterCapsule.body);
 
 		this.velocitySimulator.init();
 	}
@@ -246,14 +251,14 @@ export class Character extends THREE.Object3D implements IWorldEntity
 		this.velocityTarget.y = velY;
 	}
 
-	public setOrientation(vector: THREE.Vector3, instantly: boolean = false): void
+	public setOrientation(vector: Vector3, instantly: boolean = false): void
 	{
-		let lookVector = new THREE.Vector3().copy(vector).setY(0).normalize();
-		this.orientationTarget.copy(lookVector);
-		
+		let lookVector = new Vector3(vector.x, 0, vector.z).normalize();
+		this.orientationTarget.copyFrom(lookVector);
+
 		if (instantly)
 		{
-			this.orientation.copy(lookVector);
+			this.orientation.copyFrom(lookVector);
 		}
 	}
 
@@ -278,9 +283,9 @@ export class Character extends THREE.Object3D implements IWorldEntity
 		const dz = player.position.z - this.position.z;
 		const distSq = dx * dx + dz * dz;
 		if (distSq > 1) return;        // outside 1 m radius
-		if (distSq < 1e-4) return;     // overlapping → no meaningful direction
+		if (distSq < 1e-4) return;     // overlapping -> no meaningful direction
 
-		this.setOrientation(new THREE.Vector3(dx, 0, dz));
+		this.setOrientation(new Vector3(dx, 0, dz));
 	}
 
 	public setBehaviour(behaviour: ICharacterAI): void
@@ -289,29 +294,23 @@ export class Character extends THREE.Object3D implements IWorldEntity
 		this.behaviour = behaviour;
 	}
 
+	// The capsule body is never removed from the Havok world; while the
+	// character sits in a vehicle it is parked (no collisions, no
+	// gravity) and follows the vehicle-parented character node instead.
 	public setPhysicsEnabled(value: boolean): void {
 		this.physicsEnabled = value;
-
-		if (value === true)
-		{
-			this.world.physicsWorld.addBody(this.characterCapsule.body);
-		}
-		else
-		{
-			this.world.physicsWorld.removeBody(this.characterCapsule.body);
-		}
+		this.characterCapsule.setEnabled(value);
 	}
 
-	public readCharacterData(gltf: any): void
+	public readCharacterData(model: LoadedModel): void
 	{
-		gltf.scene.traverse((child) => {
+		Utils.traverse(model.root, (child) => {
 
-			if (child.isMesh)
+			if (Utils.isRenderableMesh(child))
 			{
-				child.geometry = child.geometry.toNonIndexed();
 				Utils.setupMeshProperties(child);
 
-				if (child.material !== undefined)
+				if (child.material !== null)
 				{
 					this.materials.push(child.material);
 				}
@@ -388,26 +387,21 @@ export class Character extends THREE.Object3D implements IWorldEntity
 		if (this.physicsEnabled) this.springMovement(timeStep);
 		if (this.physicsEnabled) this.springRotation(timeStep);
 		if (this.physicsEnabled) this.rotateModel();
-		if (this.mixer !== undefined) this.mixer.update(timeStep);
+
+		// Skeletal animationGroups advance inside scene.render() - see
+		// World.update for the animationTimeScale sync.
 
 		// Sync physics/graphics
 		if (this.physicsEnabled)
 		{
-			this.position.set(
-				this.characterCapsule.body.interpolatedPosition.x,
-				this.characterCapsule.body.interpolatedPosition.y,
-				this.characterCapsule.body.interpolatedPosition.z
-			);
+			this.position.copyFrom(this.characterCapsule.node.position);
 		}
 		else {
-			let newPos = new THREE.Vector3();
-			this.getWorldPosition(newPos);
-
-			this.characterCapsule.body.position.copy(Utils.cannonVector(newPos));
-			this.characterCapsule.body.interpolatedPosition.copy(Utils.cannonVector(newPos));
+			Utils.getWorldPosition(this, _worldPos);
+			this.characterCapsule.node.position.copyFrom(_worldPos);
 		}
 
-		this.updateMatrixWorld();
+		this.computeWorldMatrix(true);
 	}
 
 	public inputReceiverInit(): void
@@ -447,44 +441,56 @@ export class Character extends THREE.Object3D implements IWorldEntity
 			// Look in camera's direction. viewVector is read by other
 			// systems each frame; we copy into the field-bound vector
 			// instead of replacing the reference + allocating.
-			if (this.viewVector === undefined) this.viewVector = new THREE.Vector3();
-			this.viewVector.copy(this.position).sub(this.world.camera.position);
-			this.getWorldPosition(this.world.cameraOperator.target);
+			if (this.viewVector === undefined) this.viewVector = new Vector3();
+			this.viewVector.copyFrom(this.position).subtractInPlace(this.world.camera.position);
+			Utils.getWorldPosition(this, this.world.cameraOperator.target);
 		}
-		
 	}
 
+	// Plays a glTF animation group by name with a short blend-in.
+	// Babylon blends from the current pose when an animation starts
+	// (enableBlending), so stopping the previous group and starting the
+	// new one gives the same cross-fade feel three's fadeIn had.
+	// Returns the clip duration in seconds.
 	public setAnimation(clipName: string, fadeIn: number): number
 	{
-		if (this.mixer !== undefined)
+		const group = this.animationGroups.find((g) => g.name === clipName);
+		if (group === undefined)
 		{
-			// gltf
-			let clip = THREE.AnimationClip.findByName( this.animations, clipName );
-
-			let action = this.mixer.clipAction(clip);
-			if (action === null)
-			{
-				console.error(`Animation ${clipName} not found!`);
-				return 0;
-			}
-
-			this.mixer.stopAllAction();
-			action.fadeIn(fadeIn);
-			action.play();
-
-			return action.getClip().duration;
+			console.error(`Animation ${clipName} not found!`);
+			return 0;
 		}
+
+		for (const other of this.animationGroups)
+		{
+			if (other !== group && other.isStarted) other.stop();
+		}
+
+		group.enableBlending = true;
+		group.blendingSpeed = fadeIn > 0 ? Math.min(1, 1 / (fadeIn * 60)) : 1;
+		if (group.isStarted) group.stop();
+		group.start(true);
+		this.currentAnimation = group;
+
+		return this.getClipDuration(group);
+	}
+
+	private getClipDuration(group: AnimationGroup): number
+	{
+		const first = group.targetedAnimations[0];
+		const fps = first !== undefined ? first.animation.framePerSecond : 60;
+		return (group.to - group.from) / fps;
 	}
 
 	public springMovement(timeStep: number): void
 	{
 		// Simulator
-		this.velocitySimulator.target.copy(this.velocityTarget);
+		this.velocitySimulator.target.copyFrom(this.velocityTarget);
 		this.velocitySimulator.simulate(timeStep);
 
 		// Update values
-		this.velocity.copy(this.velocitySimulator.position);
-		this.acceleration.copy(this.velocitySimulator.velocity);
+		this.velocity.copyFrom(this.velocitySimulator.position);
+		this.acceleration.copyFrom(this.velocitySimulator.velocity);
 	}
 
 	public springRotation(timeStep: number): void
@@ -499,24 +505,24 @@ export class Character extends THREE.Object3D implements IWorldEntity
 		let rot = this.rotationSimulator.position;
 
 		// Updating values
-		this.orientation.applyAxisAngle(_Y_AXIS, rot);
+		Utils.applyAxisAngle(this.orientation, _Y_AXIS, rot);
 		this.angularVelocity = this.rotationSimulator.velocity;
 	}
 
-	public getLocalMovementDirection(): THREE.Vector3
+	public getLocalMovementDirection(): Vector3
 	{
 		const positiveX = this.actions.right.isPressed ? -1 : 0;
 		const negativeX = this.actions.left.isPressed ? 1 : 0;
 		const positiveZ = this.actions.up.isPressed ? 1 : 0;
 		const negativeZ = this.actions.down.isPressed ? -1 : 0;
 
-		return new THREE.Vector3(positiveX + negativeX, 0, positiveZ + negativeZ).normalize();
+		return new Vector3(positiveX + negativeX, 0, positiveZ + negativeZ).normalize();
 	}
 
-	public getCameraRelativeMovementVector(): THREE.Vector3
+	public getCameraRelativeMovementVector(): Vector3
 	{
 		const localDirection = this.getLocalMovementDirection();
-		const flatViewVector = new THREE.Vector3(this.viewVector.x, 0, this.viewVector.z).normalize();
+		const flatViewVector = new Vector3(this.viewVector.x, 0, this.viewVector.z).normalize();
 
 		return Utils.appplyVectorMatrixXZ(flatViewVector, localDirection);
 	}
@@ -539,7 +545,7 @@ export class Character extends THREE.Object3D implements IWorldEntity
 			// vectors can settle to ~1e-17 floats and the strict check
 			// would push the character into a setOrientation(near-zero)
 			// branch that yanks the facing.
-			if (moveVector.lengthSq() < 1e-6)
+			if (moveVector.lengthSquared() < 1e-6)
 			{
 				this.setOrientation(this.orientation);
 			}
@@ -552,9 +558,10 @@ export class Character extends THREE.Object3D implements IWorldEntity
 
 	public rotateModel(): void
 	{
-		this.lookAt(this.position.x + this.orientation.x, this.position.y + this.orientation.y, this.position.z + this.orientation.z);
+		_lookTarget.set(this.position.x + this.orientation.x, this.position.y + this.orientation.y, this.position.z + this.orientation.z);
+		Utils.lookAtWorld(this, _lookTarget);
 		this.tiltContainer.rotation.z = (-this.angularVelocity * 2.3 * this.velocity.length());
-		this.tiltContainer.position.setY((Math.cos(Math.abs(this.angularVelocity * 2.3 * this.velocity.length())) / 2) - 0.5);
+		this.tiltContainer.position.y = (Math.cos(Math.abs(this.angularVelocity * 2.3 * this.velocity.length())) / 2) - 0.5;
 	}
 
 	public jump(initJumpSpeed: number = -1): void
@@ -566,7 +573,7 @@ export class Character extends THREE.Object3D implements IWorldEntity
 	public findVehicleToEnter(wantsToDrive: boolean): void
 	{
 		// reusable world position variable
-		let worldPos = new THREE.Vector3();
+		let worldPos = new Vector3();
 
 		// Find best vehicle
 		let vehicleFinder = new ClosestObjectFinder<Vehicle>(this.position, 10);
@@ -590,7 +597,7 @@ export class Character extends THREE.Object3D implements IWorldEntity
 					// Consider driver seats
 					if (seat.type === SeatType.Driver)
 					{
-						seat.seatPointObject.getWorldPosition(worldPos);
+						Utils.getWorldPosition(seat.seatPointObject, worldPos);
 						seatFinder.consider(seat, worldPos);
 					}
 					// Consider passenger seats connected to driver seats
@@ -600,7 +607,7 @@ export class Character extends THREE.Object3D implements IWorldEntity
 						{
 							if (connSeat.type === SeatType.Driver)
 							{
-								seat.seatPointObject.getWorldPosition(worldPos);
+								Utils.getWorldPosition(seat.seatPointObject, worldPos);
 								seatFinder.consider(seat, worldPos);
 								break;
 							}
@@ -612,7 +619,7 @@ export class Character extends THREE.Object3D implements IWorldEntity
 					// Consider passenger seats
 					if (seat.type === SeatType.Passenger)
 					{
-						seat.seatPointObject.getWorldPosition(worldPos);
+						Utils.getWorldPosition(seat.seatPointObject, worldPos);
 						seatFinder.consider(seat, worldPos);
 					}
 				}
@@ -623,10 +630,10 @@ export class Character extends THREE.Object3D implements IWorldEntity
 				let targetSeat = seatFinder.closestObject;
 				vehicleEntryInstance.targetSeat = targetSeat;
 
-				let entryPointFinder = new ClosestObjectFinder<Object3D>(this.position);
+				let entryPointFinder = new ClosestObjectFinder<TransformNode>(this.position);
 
 				for (const point of targetSeat.entryPoints) {
-					point.getWorldPosition(worldPos);
+					Utils.getWorldPosition(point, worldPos);
 					entryPointFinder.consider(point, worldPos);
 				}
 
@@ -640,7 +647,7 @@ export class Character extends THREE.Object3D implements IWorldEntity
 		}
 	}
 
-	public enterVehicle(seat: VehicleSeat, entryPoint: THREE.Object3D): void
+	public enterVehicle(seat: VehicleSeat, entryPoint: TransformNode): void
 	{
 		this.resetControls();
 
@@ -662,10 +669,10 @@ export class Character extends THREE.Object3D implements IWorldEntity
 		this.resetVelocity();
 		this.rotateModel();
 		this.setPhysicsEnabled(false);
-		(vehicle as unknown as THREE.Object3D).attach(this);
+		this.setParent(vehicle);
 
 		this.setPosition(seat.seatPointObject.position.x, seat.seatPointObject.position.y + 0.6, seat.seatPointObject.position.z);
-		this.quaternion.copy(seat.seatPointObject.quaternion);
+		Utils.setQuaternion(this, Utils.getQuaternion(seat.seatPointObject));
 
 		this.occupySeat(seat);
 		this.setState(new Driving(this, seat));
@@ -751,7 +758,7 @@ export class Character extends THREE.Object3D implements IWorldEntity
 			{
 				this.setState(new ExitingVehicle(this, this.occupyingSeat));
 			}
-			
+
 			this.stopControllingVehicle();
 		}
 	}
@@ -771,7 +778,7 @@ export class Character extends THREE.Object3D implements IWorldEntity
 		}
 	}
 
-	public physicsPreStep(body: CANNON.Body, character: Character): void
+	public physicsPreStep(body: PhysicsBody, character: Character): void
 	{
 		PhysicsBridge.physicsPreStep(body, character);
 	}
@@ -781,7 +788,7 @@ export class Character extends THREE.Object3D implements IWorldEntity
 		PhysicsBridge.feetRaycast(this);
 	}
 
-	public physicsPostStep(body: CANNON.Body, character: Character): void
+	public physicsPostStep(body: PhysicsBody, character: Character): void
 	{
 		PhysicsBridge.physicsPostStep(body, character);
 	}
@@ -805,18 +812,15 @@ export class Character extends THREE.Object3D implements IWorldEntity
 			// listener parent.
 			this.sfx = new CharacterSfx(this, world);
 
-			// Register physics
-			world.physicsWorld.addBody(this.characterCapsule.body);
+			// The capsule body has been live in the physics world since
+			// construction; nothing to register here.
 
-			// Add to graphicsWorld
-			world.graphicsWorld.add(this);
-			world.graphicsWorld.add(this.raycastBox);
+			// Add to the scene graph
+			world.addNode(this);
+			world.addNode(this.raycastBox);
 
 			// Shadow cascades
-			this.materials.forEach((mat) =>
-			{
-				world.sky.csm.setupMaterial(mat);
-			});
+			world.sky.registerShadowCaster(this);
 		}
 	}
 
@@ -845,11 +849,14 @@ export class Character extends THREE.Object3D implements IWorldEntity
 			_.pull(world.characters, this);
 
 			// Remove physics
-			world.physicsWorld.removeBody(this.characterCapsule.body);
+			this.characterCapsule.dispose();
 
-			// Remove visuals
-			world.graphicsWorld.remove(this);
-			world.graphicsWorld.remove(this.raycastBox);
+			// Remove visuals. Animation groups are scene-level objects and
+			// would keep driving the disposed skeleton otherwise.
+			for (const group of this.animationGroups) group.dispose();
+			world.sky.unregisterShadowCaster(this);
+			world.removeNode(this);
+			world.removeNode(this.raycastBox);
 		}
 	}
 }

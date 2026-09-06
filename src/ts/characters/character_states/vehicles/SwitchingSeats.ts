@@ -1,4 +1,5 @@
-import * as THREE from 'three';
+import { Quaternion, Vector3 } from '@babylonjs/core';
+
 import
 {
 	CharacterStateBase,
@@ -16,10 +17,10 @@ export class SwitchingSeats extends CharacterStateBase
 {
 	private toSeat: VehicleSeat;
 
-	private startPosition: THREE.Vector3 = new THREE.Vector3();
-	private endPosition: THREE.Vector3 = new THREE.Vector3();
-	private startRotation: THREE.Quaternion = new THREE.Quaternion();
-	private endRotation: THREE.Quaternion = new THREE.Quaternion();
+	private startPosition: Vector3 = new Vector3();
+	private endPosition: Vector3 = new Vector3();
+	private startRotation: Quaternion = new Quaternion();
+	private endRotation: Quaternion = new Quaternion();
 
 	constructor(character: Character, fromSeat: VehicleSeat, toSeat: VehicleSeat)
 	{
@@ -33,8 +34,8 @@ export class SwitchingSeats extends CharacterStateBase
 		this.character.occupySeat(toSeat);
 
 		const right = Utils.getRight(fromSeat.seatPointObject, Space.Local);
-		const viewVector = toSeat.seatPointObject.position.clone().sub(fromSeat.seatPointObject.position).normalize();
-		const side = right.dot(viewVector) > 0 ? Side.Left : Side.Right;
+		const viewVector = toSeat.seatPointObject.position.subtract(fromSeat.seatPointObject.position).normalize();
+		const side = Vector3.Dot(right, viewVector) > 0 ? Side.Left : Side.Right;
 
 		if (side === Side.Left)
 		{
@@ -45,13 +46,13 @@ export class SwitchingSeats extends CharacterStateBase
 			this.playAnimation('sitting_shift_right', 0.1);
 		}
 
-		this.startPosition.copy(fromSeat.seatPointObject.position);
+		this.startPosition.copyFrom(fromSeat.seatPointObject.position);
 		this.startPosition.y += 0.6;
-		this.endPosition.copy(toSeat.seatPointObject.position);
+		this.endPosition.copyFrom(toSeat.seatPointObject.position);
 		this.endPosition.y += 0.6;
 
-		this.startRotation.copy(fromSeat.seatPointObject.quaternion);
-		this.endRotation.copy(toSeat.seatPointObject.quaternion);
+		this.startRotation.copyFrom(Utils.getQuaternion(fromSeat.seatPointObject));
+		this.endRotation.copyFrom(Utils.getQuaternion(toSeat.seatPointObject));
 	}
 
 	public update(timeStep: number): void
@@ -73,11 +74,11 @@ export class SwitchingSeats extends CharacterStateBase
 		{
 			let factor = this.timer / this.animationLength;
 			let sineFactor = Utils.easeInOutSine(factor);
-	
-			let lerpPosition = new THREE.Vector3().lerpVectors(this.startPosition, this.endPosition, sineFactor);
+
+			let lerpPosition = Vector3.Lerp(this.startPosition, this.endPosition, sineFactor);
 			this.character.setPosition(lerpPosition.x, lerpPosition.y, lerpPosition.z);
-	
-			this.character.quaternion.slerpQuaternions(this.startRotation, this.endRotation, sineFactor);
+
+			Quaternion.SlerpToRef(this.startRotation, this.endRotation, sineFactor, Utils.getQuaternion(this.character));
 		}
 	}
 }

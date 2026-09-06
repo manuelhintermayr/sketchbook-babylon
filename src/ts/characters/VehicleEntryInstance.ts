@@ -1,4 +1,5 @@
-import * as THREE from 'three';
+import { TransformNode, Vector3 } from '@babylonjs/core';
+import * as Utils from '../core/FunctionLibrary';
 import { VehicleSeat } from '../vehicles/VehicleSeat';
 import { Character } from './Character';
 
@@ -6,7 +7,7 @@ export class VehicleEntryInstance
 {
 	public character: Character;
 	public targetSeat: VehicleSeat;
-	public entryPoint: THREE.Object3D;
+	public entryPoint: TransformNode;
 	public wantsToDrive: boolean = false;
 
 	constructor(character: Character)
@@ -16,9 +17,9 @@ export class VehicleEntryInstance
 
 	public update(timeStep: number): void
 	{
-		let entryPointWorldPos = new THREE.Vector3();
-		this.entryPoint.getWorldPosition(entryPointWorldPos);
-		let viewVector = new THREE.Vector3().subVectors(entryPointWorldPos, this.character.position);
+		let entryPointWorldPos = new Vector3();
+		Utils.getWorldPosition(this.entryPoint, entryPointWorldPos);
+		let viewVector = entryPointWorldPos.subtract(this.character.position);
 		this.character.setOrientation(viewVector);
 		
 		let heightDifference = viewVector.y;

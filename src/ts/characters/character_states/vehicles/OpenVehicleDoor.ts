@@ -1,4 +1,5 @@
-import * as THREE from 'three';
+import { Quaternion, TransformNode, Vector3 } from '@babylonjs/core';
+
 import
 {
 	CharacterStateBase,
@@ -14,17 +15,17 @@ import { SpringSimulator } from '../../../physics/spring_simulation/SpringSimula
 export class OpenVehicleDoor extends CharacterStateBase
 {
 	private seat: VehicleSeat;
-	private entryPoint: THREE.Object3D;
+	private entryPoint: TransformNode;
 	private hasOpenedDoor: boolean = false;
 
-	private startPosition: THREE.Vector3 = new THREE.Vector3();
-	private endPosition: THREE.Vector3 = new THREE.Vector3();
-	private startRotation: THREE.Quaternion = new THREE.Quaternion();
-	private endRotation: THREE.Quaternion = new THREE.Quaternion();
+	private startPosition: Vector3 = new Vector3();
+	private endPosition: Vector3 = new Vector3();
+	private startRotation: Quaternion = new Quaternion();
+	private endRotation: Quaternion = new Quaternion();
 
 	private factorSimluator: SpringSimulator;
 
-	constructor(character: Character, seat: VehicleSeat, entryPoint: THREE.Object3D)
+	constructor(character: Character, seat: VehicleSeat, entryPoint: TransformNode)
 	{
 		super(character);
 
@@ -47,14 +48,14 @@ export class OpenVehicleDoor extends CharacterStateBase
 		this.character.setPhysicsEnabled(false);
 
 		this.character.setPhysicsEnabled(false);
-		(this.seat.vehicle as unknown as THREE.Object3D).attach(this.character);
+		this.character.setParent(this.seat.vehicle as unknown as TransformNode);
 
-		this.startPosition.copy(this.character.position);
-		this.endPosition.copy(this.entryPoint.position);
+		this.startPosition.copyFrom(this.character.position);
+		this.endPosition.copyFrom(this.entryPoint.position);
 		this.endPosition.y += 0.53;
 
-		this.startRotation.copy(this.character.quaternion);
-		this.endRotation.copy(this.entryPoint.quaternion);
+		this.startRotation.copyFrom(Utils.getQuaternion(this.character));
+		this.endRotation.copyFrom(Utils.getQuaternion(this.entryPoint));
 
 		this.factorSimluator = new SpringSimulator(60, 10, 0.5);
 		this.factorSimluator.target = 1;
@@ -67,7 +68,7 @@ export class OpenVehicleDoor extends CharacterStateBase
 		if (this.timer > 0.3 && !this.hasOpenedDoor)
 		{
 			this.hasOpenedDoor = true;
-			this.seat.door?.open();   
+			this.seat.door?.open();
 		}
 
 		if (this.animationEnded(timeStep))
@@ -75,7 +76,7 @@ export class OpenVehicleDoor extends CharacterStateBase
 			if (this.anyDirection())
 			{
 				this.character.vehicleEntryInstance = null;
-				this.character.world.graphicsWorld.attach(this.character);
+				this.character.world.attachNode(this.character);
 				this.character.setPhysicsEnabled(true);
 				this.character.setState(new Idle(this.character));
 			}
@@ -88,10 +89,10 @@ export class OpenVehicleDoor extends CharacterStateBase
 		{
 			this.factorSimluator.simulate(timeStep);
 
-			let lerpPosition = new THREE.Vector3().lerpVectors(this.startPosition, this.endPosition, this.factorSimluator.position);
+			let lerpPosition = Vector3.Lerp(this.startPosition, this.endPosition, this.factorSimluator.position);
 			this.character.setPosition(lerpPosition.x, lerpPosition.y, lerpPosition.z);
-	
-			this.character.quaternion.slerpQuaternions(this.startRotation, this.endRotation, this.factorSimluator.position);
+
+			Quaternion.SlerpToRef(this.startRotation, this.endRotation, this.factorSimluator.position, Utils.getQuaternion(this.character));
 		}
 	}
 }

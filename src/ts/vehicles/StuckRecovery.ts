@@ -1,16 +1,17 @@
-import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
+import { PhysicsBody, Quaternion, Vector3 } from '@babylonjs/core';
 
 import { CameraShake } from '../core/CameraShake';
+import { PhysicsWorld } from '../physics/PhysicsWorld';
+import * as Utils from '../core/FunctionLibrary';
 
 const STUCK_WINDOW = 6;
 const STUCK_DIST = 0.5;
 const FLIP_TIME = 3;
-// cos(80°) ≈ 0.17 - chassis-up dot world-up below this means the
+// cos(80°) ~ 0.17 - chassis-up dot world-up below this means the
 // vehicle is at or past sideways. Original Inthenew value cos(100°)
 // only counted fully-upside-down chassis, so a heli or car that
 // landed cleanly on its side just sat there. 80° still leaves a
-// healthy margin (a vehicle parked on a 45° hill reads upY ≈ 0.7).
+// healthy margin (a vehicle parked on a 45° hill reads upY ~ 0.7).
 const UPSIDE_DOWN_THRESHOLD = Math.cos(80 * Math.PI / 180);
 const RECOVERY_COOLDOWN = 2;
 
@@ -18,9 +19,8 @@ const RECOVERY_COOLDOWN = 2;
 // allocation-pooling pattern. The recovery path runs at most once a
 // few seconds, so the win is small, but staying consistent with the
 // rest of the vehicle physics helpers is worth a few lines.
-const _quat = new THREE.Quaternion();
-const _euler = new THREE.Euler();
-const _yawOnly = new THREE.Quaternion();
+const _euler = new Vector3();
+const _yawOnly = new Quaternion();
 
 // Auto-recovery for stuck or flipped vehicles. Two independently
 // toggleable gates:
@@ -28,7 +28,7 @@ const _yawOnly = new THREE.Quaternion();
 //   - Stuck: while the player holds throttle/steering, sample distance
 //     traveled over a 6 s window. If total motion stays below 0.5 m,
 //     the vehicle is wedged on geometry - recover.
-//   - Flip:  while the chassis is past horizontal (up.y < cos(100°)),
+//   - Flip:  while the chassis is past horizontal (up.y < cos(80°)),
 //     accumulate a timer. If it sits upside-down for 3 s, recover.
 //
 // Recovery lifts 2 m, snaps to a yaw-only orientation (preserves
@@ -41,16 +41,16 @@ export class StuckRecovery
 	public stuckRecoveryEnabled: boolean = true;
 	public flipRecoveryEnabled: boolean = true;
 
-	private body: CANNON.Body;
+	private body: PhysicsBody;
 	private noDirectionPressed: () => boolean;
 
 	private stuckSamples: { dist: number; time: number }[] = [];
-	private stuckLastPos: THREE.Vector3 = new THREE.Vector3();
+	private stuckLastPos: Vector3 = new Vector3();
 	private stuckInitialized: boolean = false;
 	private flipTimer: number = 0;
 	private recoveryCooldown: number = 0;
 
-	constructor(body: CANNON.Body, noDirectionPressed: () => boolean)
+	constructor(body: PhysicsBody, noDirectionPressed: () => boolean)
 	{
 		this.body = body;
 		this.noDirectionPressed = noDirectionPressed;
@@ -62,14 +62,16 @@ export class StuckRecovery
 		this.recoveryCooldown = Math.max(0, this.recoveryCooldown - dt);
 		if (this.recoveryCooldown > 0) return;
 
+		const node = this.body.transformNode;
+
 		// Stuck sampling - track distance traveled while the player is
 		// actively trying to move. Sitting at idle is not "stuck".
 		if (this.stuckRecoveryEnabled && !this.noDirectionPressed())
 		{
-			const cur = this.body.position;
+			const cur = node.position;
 			if (!this.stuckInitialized)
 			{
-				this.stuckLastPos.set(cur.x, cur.y, cur.z);
+				this.stuckLastPos.copyFrom(cur);
 				this.stuckInitialized = true;
 			}
 
@@ -77,7 +79,7 @@ export class StuckRecovery
 			const dy = cur.y - this.stuckLastPos.y;
 			const dz = cur.z - this.stuckLastPos.z;
 			const traveled = Math.sqrt(dx * dx + dy * dy + dz * dz);
-			this.stuckLastPos.set(cur.x, cur.y, cur.z);
+			this.stuckLastPos.copyFrom(cur);
 
 			this.stuckSamples.unshift({ dist: traveled, time: dt });
 		}
@@ -110,7 +112,7 @@ export class StuckRecovery
 		let flipTimerExpired = false;
 		if (this.flipRecoveryEnabled)
 		{
-			const q = this.body.quaternion;
+			const q = Utils.getQuaternion(node);
 			// Apply quaternion to (0,1,0) - y component of the result is
 			// up.dot(worldUp). When < threshold the chassis is past
 			// horizontal.
@@ -129,23 +131,13 @@ export class StuckRecovery
 		if (!isStuck && !flipTimerExpired) return;
 
 		// Recover: keep heading (yaw only), lift, zero out everything.
-		const pos = this.body.position;
-		this.body.position.set(pos.x, pos.y + 2, pos.z);
+		node.position.y += 2;
 
-		_quat.set(
-			this.body.quaternion.x,
-			this.body.quaternion.y,
-			this.body.quaternion.z,
-			this.body.quaternion.w,
-		);
-		_euler.setFromQuaternion(_quat, 'YXZ');
-		_euler.x = 0;
-		_euler.z = 0;
-		_yawOnly.setFromEuler(_euler);
-		this.body.quaternion.set(_yawOnly.x, _yawOnly.y, _yawOnly.z, _yawOnly.w);
+		Utils.eulerFromQuaternion(Utils.getQuaternion(node), 'YXZ', _euler);
+		Quaternion.RotationYawPitchRollToRef(_euler.y, 0, 0, _yawOnly);
+		PhysicsWorld.setNodeRotation(node, _yawOnly);
 
-		this.body.velocity.setZero();
-		this.body.angularVelocity.setZero();
+		PhysicsWorld.zeroVelocity(this.body);
 
 		CameraShake.trigger('collision', 1.2);
 		this.recoveryCooldown = RECOVERY_COOLDOWN;

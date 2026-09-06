@@ -1,13 +1,20 @@
-import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
+import {
+	Engine,
+	FreeCamera,
+	FxaaPostProcess,
+	Node,
+	PhysicsBody,
+	PhysicsViewer,
+	Quaternion,
+	Scene,
+	TransformNode,
+	Vector3,
+} from '@babylonjs/core';
 import Swal from 'sweetalert2';
 
 import { CameraOperator } from '../core/CameraOperator';
-import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
-import WebGL from 'three/examples/jsm/capabilities/WebGL.js';
 
 import Stats from 'stats.js';
-import CannonDebugger from 'cannon-es-debugger';
 import * as _ from 'lodash';
 
 import { InputManager } from '../core/InputManager';
@@ -36,24 +43,39 @@ import { OutlineEffect } from './OutlineEffect';
 import { AmbientSound } from './audio/AmbientSound';
 import { BackgroundMusic } from './audio/BackgroundMusic';
 import { SfxBus } from './audio/SfxBus';
+import { AudioListener } from './audio/SpatialAudio';
 import { bootstrapHTML } from './setup/HTMLBootstrap';
-import { setupRendererPipeline, tickRenderPipeline, tickCannonDebug } from './setup/RendererPipeline';
+import { setupRendererPipeline, tickRenderPipeline, tickPhysicsDebug } from './setup/RendererPipeline';
 import { createParamsGUI } from './setup/ParamsGUI';
 import { wireV02GameMode } from './setup/v02GameMode';
 import { loadScene } from './loading/SceneLoader';
 import { WorldLabels } from './ui/WorldLabels';
+import { LabelRenderer } from './ui/LabelRenderer';
 import { TouchControls } from '../core/TouchControls';
+import { PhysicsWorld } from '../physics/PhysicsWorld';
+import { UpdateOrder } from '../enums/UpdateOrder';
+import { BaseScene } from './sandboxes/BaseScene';
+
+// Sandboxes are built against a live Babylon scene, so index.html hands
+// World a factory instead of a ready instance: `(scene) => new
+// TestScene(scene)` or `(scene) => Sw01Scene.createAsync(scene)`.
+export type SandboxFactory = (scene: Scene) => BaseScene | Promise<BaseScene>;
+
+const _worldPos = new Vector3();
+const _identityQuat = Quaternion.Identity();
 
 export class World
 {
-	public renderer: THREE.WebGLRenderer;
-	public labelRenderer: CSS2DRenderer;
-	public camera: THREE.PerspectiveCamera;
-	public composer: any;
+	public engine: Engine;
+	public canvas: HTMLCanvasElement;
+	public scene: Scene;
+	public camera: FreeCamera;
+	public labelRenderer: LabelRenderer;
+	public fxaaPass: FxaaPostProcess;
+	public fxaaAttached: boolean = true;
 	public stats: Stats;
-	public graphicsWorld: THREE.Scene;
 	public sky: Sky;
-	public physicsWorld: CANNON.World;
+	public physicsWorld: PhysicsWorld;
 	public parallelPairs: any[];
 	public physicsFrameRate: number;
 	public physicsFrameTime: number;
@@ -69,8 +91,8 @@ export class World
 	public cameraOperator: CameraOperator;
 	public timeScaleTarget: number = 1;
 	public console: InfoStack;
-	public cannonDebugRenderer: ReturnType<typeof CannonDebugger> | undefined;
-	public cannonDebugMeshes: THREE.Mesh[] = [];
+	public physicsViewer: PhysicsViewer | undefined;
+	public physicsDebugBodies: Set<PhysicsBody> = new Set();
 	public scenarios: Scenario[] = [];
 	public characters: Character[] = [];
 	public vehicles: Vehicle[] = [];
@@ -91,7 +113,7 @@ export class World
 	public updatables: IUpdatable[] = [];
 
 	public pauseMenu: PauseMenu;
-	public audioListener: THREE.AudioListener | null = null;
+	public audioListener: AudioListener | null = null;
 	public gui: any;
 	public cameraShake: CameraShake;
 	public outlineEffect: OutlineEffect;
@@ -102,12 +124,19 @@ export class World
 
 	private lastScenarioID: string;
 
-	constructor(worldScenePath?: any)
+	constructor(worldScenePath?: string | SandboxFactory)
 	{
+		// Console handle for poking at the live world (scene, physics,
+		// entities) while debugging in the browser.
+		(window as any).sketchbookWorld = this;
+
 		const scope = this;
 
-		// WebGL 2 not supported
-		if (!WebGL.isWebGL2Available())
+		setupRendererPipeline(this);
+
+		// WebGL 2 not supported - Babylon falls back to WebGL 1 silently,
+		// which loses the instanced grass and the half-float outline RT.
+		if (this.engine.webGLVersion < 2)
 		{
 			Swal.fire({
 				icon: 'warning',
@@ -118,8 +147,6 @@ export class World
 				buttonsStyling: false
 			});
 		}
-
-		setupRendererPipeline(this);
 
 		bootstrapHTML(this);
 
@@ -142,12 +169,10 @@ export class World
 			if (e.code === 'KeyZ' && !e.repeat) this.toggleControlsOverlay();
 		});
 
-		// Physics
-		this.physicsWorld = new CANNON.World();
-		this.physicsWorld.gravity.set(0, -9.81, 0);
-		this.physicsWorld.broadphase = new CANNON.SAPBroadphase(this.physicsWorld);
-		//this.physicsWorld.solver.iterations = 10; NOW DEFAULT for GSSolver
-		this.physicsWorld.allowSleep = true;
+		// Physics - Havok behind the PhysicsWorld facade. Stepped manually
+		// from update() so Time_Scale / pause apply to the simulation.
+		this.physicsWorld = new PhysicsWorld(this.scene);
+		this.physicsWorld.setGravity(0, -9.81, 0);
 
 		this.parallelPairs = [];
 		this.physicsFrameRate = 60;
@@ -193,7 +218,7 @@ export class World
 		this.pauseMenu.setSettingsHandler(() => settingsModal.open());
 
 		// Initialization
-		this.inputManager = new InputManager(this, this.renderer.domElement);
+		this.inputManager = new InputManager(this, this.canvas);
 		this.cameraOperator = new CameraOperator(this, this.camera, this.params.Mouse_Sensitivity);
 		this.sky = new Sky(this);
 
@@ -210,7 +235,7 @@ export class World
 		this.registerUpdatable(this.cameraShake);
 
 		// Outline effect - depth-based Sobel edges. Owned by World so the
-		// render pipeline can call its renderPass after the composer pass.
+		// render pipeline can toggle its depth pre-pass each frame.
 		// No-op when params.Outlines is false.
 		this.outlineEffect = new OutlineEffect(this);
 
@@ -231,7 +256,15 @@ export class World
 		// directly from the relevant event hook.
 		this.sfxBus = new SfxBus(this);
 
-		// World labels - registry + distance culling for CSS2D tags.
+		// Positional audio - the listener follows the camera and every
+		// PositionalAudio source follows its node. Runs in the Audio slot
+		// after the camera operator has finalised this frame's camera.
+		this.registerUpdatable({
+			updateOrder: UpdateOrder.Audio,
+			update: () => this.audioListener?.updateFromCamera(this.camera),
+		});
+
+		// World labels - registry + distance culling for DOM tags.
 		// Constructed early so attachNameLabel calls from later spawn
 		// code go through it.
 		this.worldLabels = new WorldLabels(this);
@@ -260,9 +293,9 @@ export class World
 		}, 10);
 
 		// Load scene if path is supplied. The argument is either a string
-		// path to a .glb (loaded async via GLTFLoader) or a BaseScene
-		// instance from src/ts/world/sandboxes (built synchronously in
-		// its constructor). Both paths funnel into loadScene().
+		// path to a .glb (loaded async through the glTF loader) or a
+		// sandbox factory that builds a BaseScene against this.scene.
+		// Both paths funnel into loadScene().
 		if (worldScenePath !== undefined)
 		{
 			let loadingManager = new LoadingManager(this);
@@ -277,7 +310,7 @@ export class World
 					// string actually breaks paragraphs - SweetAlert2's
 					// plain `text:` collapses whitespace.
 					html: t('world.welcome.body'),
-					footer: '<a href="https://github.com/manuelhintermayr/sketchbook-upgraded" target="_blank">GitHub page</a>',
+					footer: '<a href="https://github.com/manuelhintermayr/sketchbook-babylon" target="_blank">GitHub page</a>',
 					confirmButtonText: t('world.welcome.button'),
 					buttonsStyling: false
 				}).then((result) => {
@@ -289,22 +322,31 @@ export class World
 			};
 			if (typeof worldScenePath === 'string')
 			{
-				loadingManager.loadGLTF(worldScenePath, (gltf) =>
+				loadingManager.loadGLTF(worldScenePath, (model) =>
 				{
-					loadScene(this, loadingManager, gltf);
+					loadScene(this, loadingManager, model);
 				}
 				);
 			}
-			else if (worldScenePath && worldScenePath.scene instanceof THREE.Object3D)
+			else if (typeof worldScenePath === 'function')
 			{
-				// BaseScene instance - build a synthetic GLTF-shaped object
-				// and feed it through the same loadScene path. A throwaway
-				// tracker entry keeps the loading-screen accounting honest
-				// in case no other async loads (vehicle GLBs) follow.
+				// Sandbox factory - build the scene, wrap it in the same
+				// LoadedModel shape a .glb produces and feed it through
+				// loadScene. A tracker entry keeps the loading-screen
+				// accounting honest in case no other async loads (vehicle
+				// GLBs) follow.
 				const entry = loadingManager.addLoadingEntry('sandbox-scene');
-				const fakeGltf = { scene: worldScenePath.scene, animations: worldScenePath.sceneAnimations || [] };
-				loadScene(this, loadingManager, fakeGltf);
-				loadingManager.doneLoading(entry);
+				Promise.resolve(worldScenePath(this.scene)).then((instance) =>
+				{
+					loadScene(this, loadingManager, {
+						root: instance.root,
+						meshes: [],
+						skeletons: [],
+						animationGroups: instance.sceneAnimations || [],
+						scene: this.scene,
+					});
+					loadingManager.doneLoading(entry);
+				}).catch((error) => console.error(error));
 			}
 		}
 		else
@@ -319,7 +361,11 @@ export class World
 			});
 		}
 
-		this.render(this);
+		// Babylon measures its frame delta (which drives the skeletal
+		// animations) inside its own render loop, so the engine owns the
+		// requestAnimationFrame - render() still does the timestep
+		// bookkeeping exactly as before.
+		this.engine.runRenderLoop(() => this.render(this));
 	}
 
 	// Update
@@ -339,10 +385,15 @@ export class World
 		});
 
 		// Lerp time scale
-		this.params.Time_Scale = THREE.MathUtils.lerp(this.params.Time_Scale, this.timeScaleTarget, 0.2);
+		this.params.Time_Scale = this.params.Time_Scale + (this.timeScaleTarget - this.params.Time_Scale) * 0.2;
+
+		// Skeletal animations advance inside scene.render() on the
+		// engine's own delta; scale them with the world so slow-mo and
+		// pause freeze the characters along with the physics.
+		this.scene.animationTimeScale = this.params.Time_Scale;
 
 		// Physics debug
-		if (this.params.Debug_Physics) tickCannonDebug(this);
+		if (this.params.Debug_Physics) tickPhysicsDebug(this);
 	}
 
 	public updatePhysics(timeStep: number): void
@@ -382,11 +433,12 @@ export class World
 		const targetGravityY = baseG * (this.params?.Gravity_Scale ?? 1);
 		if (this.physicsWorld.gravity.y !== targetGravityY)
 		{
-			this.physicsWorld.gravity.set(0, targetGravityY, 0);
+			this.physicsWorld.setGravity(0, targetGravityY, 0);
 		}
 
-		// Step the physics world
-		this.physicsWorld.step(this.physicsFrameTime, timeStep);
+		// Step the physics world - one Havok step per render frame with
+		// the scaled delta (raycast vehicles update in the preStep hook).
+		this.physicsWorld.step(timeStep);
 
 		this.characters.forEach((char) => {
 			if (typeof char.physicsPostStep == 'function')
@@ -394,7 +446,7 @@ export class World
 				char.physicsPostStep(char.characterCapsule.body, char)
 			}
 
-			if (this.isOutOfBounds(char.characterCapsule.body.position))
+			if (this.isOutOfBounds(char.characterCapsule.node.position))
 			{
 				this.outOfBoundsRespawn(char.characterCapsule.body);
 			}
@@ -402,19 +454,17 @@ export class World
 
 		this.vehicles.forEach((vehicle) => {
 
-			if (this.isOutOfBounds(vehicle.rayCastVehicle.chassisBody.position))
+			if (this.isOutOfBounds(vehicle.position))
 			{
-				let worldPos = new THREE.Vector3();
-				vehicle.spawnPoint.getWorldPosition(worldPos);
-				//worldPos.setComponent(1, worldPos.getComponent(1) + 1);
-				let worldPos_CANNON = new CANNON.Vec3(worldPos.x, worldPos.y+1, worldPos.z)
-				//worldPos.y += 1;
-				this.outOfBoundsRespawn(vehicle.rayCastVehicle.chassisBody, worldPos_CANNON);
+				vehicle.spawnPoint.computeWorldMatrix(true);
+				_worldPos.copyFrom(vehicle.spawnPoint.absolutePosition);
+				_worldPos.y += 1;
+				this.outOfBoundsRespawn(vehicle.collision, _worldPos);
 			}
 		});
 	}
 
-	public isOutOfBounds(position: CANNON.Vec3): boolean
+	public isOutOfBounds(position: Vector3): boolean
 	{
 		let inside = position.x > -211.882 && position.x < 211.882 &&
 					position.z > -169.098 && position.z < 153.232 &&
@@ -424,33 +474,23 @@ export class World
 		return !inside && belowSeaLevel;
 	}
 
-	public outOfBoundsRespawn(body: CANNON.Body, position?: CANNON.Vec3): void
+	public outOfBoundsRespawn(body: PhysicsBody, position?: Vector3): void
 	{
-		let newPos = position || new CANNON.Vec3(0, 16, 0);
-		let newQuat = new CANNON.Quaternion(0, 0, 0, 1);
+		let newPos = position || new Vector3(0, 16, 0);
 
-		body.position.copy(newPos);
-		body.interpolatedPosition.copy(newPos);
-		body.quaternion.copy(newQuat);
-		body.interpolatedQuaternion.copy(newQuat);
-		body.velocity.setZero();
-		body.angularVelocity.setZero();
+		PhysicsWorld.teleport(body, newPos, _identityQuat);
+		PhysicsWorld.zeroVelocity(body);
 	}
 
 	/**
 	 * Rendering loop.
 	 * Implements fps limiter and frame-skipping
 	 * Calls world's "update" function before rendering.
-	 * @param {World} world 
+	 * @param {World} world
 	 */
 	public render(world: World): void
 	{
 		this.requestDelta = this.stopwatchDelta();
-
-		requestAnimationFrame(() =>
-		{
-			world.render(world);
-		});
 
 		// Getting timeStep
 		let unscaledTimeStep = (this.requestDelta + this.renderDelta + this.logicDelta) ;
@@ -472,8 +512,8 @@ export class World
 		this.stats.end();
 		this.stats.begin();
 
-		// Actual GPU dispatch (composer/renderer + outline + label) lives
-		// in setup/RendererPipeline so the pipeline build + the per-frame
+		// Actual GPU dispatch (scene render + outline + labels) lives in
+		// setup/RendererPipeline so the pipeline build + the per-frame
 		// draw calls sit next to each other.
 		tickRenderPipeline(this);
 
@@ -481,9 +521,8 @@ export class World
 		this.renderDelta = this.stopwatchDelta();
 	}
 
-	// Returns seconds elapsed since the previous call. Replaces the
-	// now-deprecated THREE.Clock which was used the same way (three calls
-	// per frame to measure request/logic/render phases).
+	// Returns seconds elapsed since the previous call - three calls per
+	// frame measure the request/logic/render phases.
 	private stopwatchDelta(): number
 	{
 		const now = performance.now();
@@ -517,6 +556,28 @@ export class World
 		const muted = this.params?.Master_Audio === false;
 		this.audioListener.setMasterVolume(muted ? 0 : this.params.Master_Volume / 100);
 	}
+
+	//#region Scene graph helpers
+
+	// three had scene.add / scene.remove / scene.attach; Babylon nodes
+	// always belong to the scene, so "adding" is un-parenting and
+	// "removing" is disposing.
+	public addNode(node: Node): void
+	{
+		node.parent = null;
+	}
+
+	public attachNode(node: TransformNode): void
+	{
+		node.setParent(null);
+	}
+
+	public removeNode(node: Node): void
+	{
+		if (!node.isDisposed()) node.dispose();
+	}
+
+	//#endregion
 
 	public add(worldEntity: IWorldEntity): void
 	{
@@ -624,7 +685,7 @@ export class World
 		// Changing time scale with scroll wheel
 		const timeScaleBottomLimit = 0.003;
 		const timeScaleChangeSpeed = 1.3;
-	
+
 		if (scrollAmount > 0)
 		{
 			this.timeScaleTarget /= timeScaleChangeSpeed;

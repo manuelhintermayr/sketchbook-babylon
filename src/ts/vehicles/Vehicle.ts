@@ -1,8 +1,19 @@
-import { Character } from '../characters/Character';
-import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
-import { World } from '../world/World';
+import {
+	Material,
+	PhysicsBody,
+	PhysicsMotionType,
+	PhysicsShape,
+	PhysicsShapeBox,
+	PhysicsShapeContainer,
+	PhysicsShapeSphere,
+	Quaternion,
+	TransformNode,
+	Vector3,
+} from '@babylonjs/core';
 import * as _ from 'lodash';
+
+import { Character } from '../characters/Character';
+import { World } from '../world/World';
 import { KeyBinding } from '../core/KeyBinding';
 import { VehicleSeat } from './VehicleSeat';
 import { Wheel } from './Wheel';
@@ -18,25 +29,38 @@ import { EngineProfile } from '../world/audio/EngineSound';
 import { StuckRecovery } from './StuckRecovery';
 import { VehicleAudioBridge } from './VehicleAudioBridge';
 import { syncWheelTransforms, updateWheelProps } from './WheelManager';
+import { RaycastVehicle, WheelInfoOptions } from '../physics/RaycastVehicle';
+import { PhysicsWorld } from '../physics/PhysicsWorld';
+import { LoadedModel } from '../core/LoadingManager';
+import { applyCollisionFilter } from '../physics/colliders/ColliderBase';
 
-export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
+const _velocity = new Vector3();
+const _cameraTarget = new Vector3();
+
+export abstract class Vehicle extends TransformNode implements IWorldEntity
 {
 	public updateOrder: number = UpdateOrder.VehiclePhysics;
 	public abstract entityType: EntityType;
-	
+
 	public controllingCharacter: Character;
 	public actions: { [action: string]: KeyBinding; } = {};
-	public rayCastVehicle: CANNON.RaycastVehicle;
+	public rayCastVehicle: RaycastVehicle;
 	public seats: VehicleSeat[] = [];
 	public wheels: Wheel[] = [];
 	public drive: string;
-	public camera: any;
+	public camera: TransformNode;
 	public world: World;
-	public help: THREE.AxesHelper;
-	public collision: CANNON.Body;
-	public materials: THREE.Material[] = [];
-	public spawnPoint: THREE.Object3D;
-	private modelContainer: THREE.Group;
+	// The chassis body. This node is its transform node, so
+	// this.position / rotationQuaternion ARE the chassis pose.
+	public collision: PhysicsBody;
+	public collisionShape: PhysicsShapeContainer;
+	public materials: Material[] = [];
+	public spawnPoint: TransformNode;
+	public model: LoadedModel;
+	// Orientation the chassis resets to when a car ends up on its roof
+	// or an AI driver gets stuck (cannon exposed this as initQuaternion).
+	public initQuaternion: Quaternion = Quaternion.Identity();
+	private modelContainer: TransformNode;
 
 	public firstPerson: boolean = false;
 
@@ -70,32 +94,39 @@ export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
 	protected engineSoundProfile: EngineProfile | null = null;
 	private audioBridge: VehicleAudioBridge | null = null;
 
-	constructor(gltf: any, handlingSetup?: any)
+	constructor(model: LoadedModel, handlingSetup?: WheelInfoOptions)
 	{
-		super();
+		super('vehicle', model.scene);
+		this.rotationQuaternion = Quaternion.Identity();
+		this.model = model;
 
 		if (handlingSetup === undefined) handlingSetup = {};
-		handlingSetup.chassisConnectionPointLocal = new CANNON.Vec3(),
-		handlingSetup.axleLocal = new CANNON.Vec3(-1, 0, 0);
-		handlingSetup.directionLocal = new CANNON.Vec3(0, -1, 0);
+		handlingSetup.chassisConnectionPointLocal = new Vector3(),
+		handlingSetup.axleLocal = new Vector3(-1, 0, 0);
+		handlingSetup.directionLocal = new Vector3(0, -1, 0);
 
-		// Physics mat
-		let mat = new CANNON.Material('Mat');
-		mat.friction = 0.01;
-
-		// Collision body
-		this.collision = new CANNON.Body({ mass: 50 });
-		this.collision.material = mat;
+		// Collision shape - a compound of the GLB's box / sphere markers.
+		this.collisionShape = new PhysicsShapeContainer(model.scene);
+		this.collisionShape.material = { friction: 0.01, restitution: 0 };
 
 		// Read GLTF
-		this.readVehicleData(gltf);
+		this.readVehicleData(model);
 
-		this.modelContainer = new THREE.Group();
-		this.add(this.modelContainer);
-		this.modelContainer.add(gltf.scene);
+		this.modelContainer = new TransformNode('modelContainer', model.scene);
+		this.modelContainer.parent = this;
+		model.root.parent = this.modelContainer;
+
+		// Collision body. Mass 50 like the cannon chassis; the centre of
+		// mass is pinned to the node origin because cannon applied
+		// forces around the body origin regardless of shape offsets, and
+		// the vehicle tuning grew up on that.
+		this.collision = new PhysicsBody(this, PhysicsMotionType.DYNAMIC, false, model.scene);
+		this.collision.shape = this.collisionShape;
+		this.collision.setMassProperties({ mass: 50, centerOfMass: new Vector3(0, 0, 0) });
+		PhysicsWorld.enableNodeSync(this.collision);
 
 		// Raycast vehicle component
-		this.rayCastVehicle = new CANNON.RaycastVehicle({
+		this.rayCastVehicle = new RaycastVehicle({
 			chassisBody: this.collision,
 			indexUpAxis: 1,
 			indexRightAxis: 0,
@@ -109,8 +140,6 @@ export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
 			wheel.rayCastWheelInfoIndex = index;
 		});
 
-		this.help = new THREE.AxesHelper(2);
-
 		this.recovery = new StuckRecovery(this.collision, () => this.noDirectionPressed());
 	}
 
@@ -118,8 +147,7 @@ export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
 	// override updateCarSpeed when they want their gear ladder rescaled
 	// against an Engine_Force slider; updateWheelProps stays generic so
 	// Friction_Slip / Suspension_Stiffness / Damping_* / Max_Suspension
-	// flow into the cannon raycast wheel infos for every vehicle that
-	// has wheels.
+	// flow into the raycast wheel infos for every vehicle that has wheels.
 	public updateWheelProps(property: string, value: number): void
 	{
 		updateWheelProps(this.rayCastVehicle, property, value);
@@ -146,25 +174,16 @@ export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
 
 	public update(timeStep: number): void
 	{
-		this.position.set(
-			this.collision.interpolatedPosition.x,
-			this.collision.interpolatedPosition.y,
-			this.collision.interpolatedPosition.z
-		);
-
-		this.quaternion.set(
-			this.collision.interpolatedQuaternion.x,
-			this.collision.interpolatedQuaternion.y,
-			this.collision.interpolatedQuaternion.z,
-			this.collision.interpolatedQuaternion.w
-		);
+		// Havok writes the chassis pose straight into this node after
+		// every step, so there is no position/quaternion copy here.
 
 		// Hard-landing detection - only when the player is actually in
 		// the seat, otherwise an empty parked car wobbling on respawn
 		// would shake the camera too.
 		if (this.controllingCharacter !== undefined)
 		{
-			const curY = this.collision.velocity.y;
+			this.collision.getLinearVelocityToRef(_velocity);
+			const curY = _velocity.y;
 			if (this.prevLinvelY < -6 && curY > -1)
 			{
 				const impact = Math.min(Math.abs(this.prevLinvelY) / 15, 2);
@@ -184,14 +203,14 @@ export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
 			seat.update(timeStep);
 		});
 
-		syncWheelTransforms(this.rayCastVehicle, this.wheels, this.collision);
+		syncWheelTransforms(this.rayCastVehicle, this.wheels);
 
-		this.updateMatrixWorld();
+		this.computeWorldMatrix(true);
 	}
 
 	public forceCharacterOut(): void
 	{
-		this.controllingCharacter.modelContainer.visible = true;
+		this.controllingCharacter.modelContainer.setEnabled(true);
 		this.controllingCharacter.exitVehicle();
 	}
 
@@ -199,7 +218,7 @@ export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
 	{
 		if (this.actions.seat_switch.justPressed && this.controllingCharacter?.occupyingSeat?.connectedSeats.length > 0)
 		{
-			this.controllingCharacter.modelContainer.visible = true;
+			this.controllingCharacter.modelContainer.setEnabled(true);
 			this.controllingCharacter.setState(
 				new SwitchingSeats(
 					this.controllingCharacter,
@@ -222,11 +241,11 @@ export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
 
 	public allowSleep(value: boolean): void
 	{
-		this.collision.allowSleep = value;
+		PhysicsWorld.setAllowSleep(this.collision, value);
 
 		if (value === false)
 		{
-			this.collision.wakeUp();
+			PhysicsWorld.wakeUp(this.collision);
 		}
 	}
 
@@ -261,7 +280,7 @@ export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
 	public setFirstPersonView(value: boolean): void
 	{
 		this.firstPerson = value;
-		if (this.controllingCharacter !== undefined) this.controllingCharacter.modelContainer.visible = !value;
+		if (this.controllingCharacter !== undefined) this.controllingCharacter.modelContainer.setEnabled(!value);
 
 		if (value)
 		{
@@ -279,7 +298,7 @@ export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
 	{
 		this.setFirstPersonView(!this.firstPerson);
 	}
-	
+
 	public triggerAction(actionName: string, value: boolean): void
 	{
 		// Get action and set it's parameters
@@ -323,7 +342,7 @@ export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
 
 	public inputReceiverInit(): void
 	{
-		this.collision.allowSleep = false;
+		PhysicsWorld.setAllowSleep(this.collision, false);
 		this.setFirstPersonView(false);
 	}
 
@@ -331,14 +350,14 @@ export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
 	{
 		if (this.firstPerson)
 		{
-			let temp = new THREE.Vector3().copy(this.camera.position);
-			temp.applyQuaternion(this.quaternion);
-			const target = temp.add(this.position);
+			_cameraTarget.copyFrom(this.camera.position);
+			_cameraTarget.applyRotationQuaternionInPlace(this.rotationQuaternion);
+			const target = _cameraTarget.addInPlace(this.position);
 			// Inthenew's centerHere keeps the look-at point at the
 			// camera-empty's authored Y in world space, so the FP camera
 			// doesn't drift vertically as the chassis pitches.
 			if (this.centerHere) target.y = this.position.y + this.camera.position.y;
-			this.world.cameraOperator.target.copy(target);
+			this.world.cameraOperator.target.copyFrom(target);
 		}
 		else
 		{
@@ -354,9 +373,7 @@ export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
 
 	public setPosition(x: number, y: number, z: number): void
 	{
-		this.collision.position.x = x;
-		this.collision.position.y = y;
-		this.collision.position.z = z;
+		this.position.set(x, y, z);
 	}
 
 	public setSteeringValue(val: number): void
@@ -403,18 +420,16 @@ export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
 		{
 			this.world = world;
 			world.vehicles.push(this);
-			world.graphicsWorld.add(this);
+			world.addNode(this);
 			this.rayCastVehicle.addToWorld(world.physicsWorld);
 
 			this.wheels.forEach((wheel) =>
 			{
-				world.graphicsWorld.attach(wheel.wheelObject);
+				world.attachNode(wheel.wheelObject);
 			});
 
-			this.materials.forEach((mat) =>
-			{
-				world.sky.csm.setupMaterial(mat);
-			});
+			world.sky.registerShadowCaster(this);
+			this.wheels.forEach((wheel) => world.sky.registerShadowCaster(wheel.wheelObject));
 
 			this.audioBridge = new VehicleAudioBridge(this.collision);
 			this.audioBridge.attach(world, this, this.engineSoundProfile);
@@ -431,89 +446,94 @@ export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
 		{
 			this.world = undefined;
 			_.pull(world.vehicles, this);
-			world.graphicsWorld.remove(this);
 			this.rayCastVehicle.removeFromWorld(world.physicsWorld);
-
-			this.wheels.forEach((wheel) =>
-			{
-				world.graphicsWorld.remove(wheel.wheelObject);
-			});
 
 			if (this.audioBridge !== null)
 			{
 				this.audioBridge.detach(world);
 				this.audioBridge = null;
 			}
+
+			this.wheels.forEach((wheel) =>
+			{
+				world.sky.unregisterShadowCaster(wheel.wheelObject);
+				world.removeNode(wheel.wheelObject);
+			});
+
+			world.sky.unregisterShadowCaster(this);
+			this.collision.dispose();
+			this.collisionShape.dispose();
+			world.removeNode(this);
 		}
 	}
 
-	public readVehicleData(gltf: any): void
+	public readVehicleData(model: LoadedModel): void
 	{
-		gltf.scene.traverse((child) => {
+		Utils.traverse(model.root, (child) => {
 
-			if (child.isMesh)
+			if (Utils.isRenderableMesh(child))
 			{
 				Utils.setupMeshProperties(child);
 
-				if (child.material !== undefined)
+				if (child.material !== null)
 				{
 					this.materials.push(child.material);
 				}
 			}
 
-			if (child.hasOwnProperty('userData'))
+			if (!(child instanceof TransformNode)) return;
+			const ud = Utils.userData(child);
+			if (ud.hasOwnProperty('data'))
 			{
-				if (child.userData.hasOwnProperty('data'))
+				if (ud.data === 'seat')
 				{
-					if (child.userData.data === 'seat')
+					this.seats.push(new VehicleSeat(this, child, model));
+				}
+				if (ud.data === 'camera')
+				{
+					this.camera = child;
+					const vb = Number(ud.viewBack);
+					if (!isNaN(vb)) this.viewBack = vb;
+					if (ud.centerHere === 'true') this.centerHere = true;
+				}
+				if (ud.data === 'wheel')
+				{
+					this.wheels.push(new Wheel(child));
+				}
+				if (ud.data === 'collision')
+				{
+					// Some Inthenew GLBs (e.g. rocketship.glb) tag boxes as
+					// userData.type='box' rather than userData.shape='box',
+					// presumably because they were re-exported under a
+					// different Blender plugin. Accept either spelling so
+					// the rocket actually has a chassis to stand on.
+					const shape = ud.shape ?? ud.type;
+					if (shape === 'box')
 					{
-						this.seats.push(new VehicleSeat(this, child, gltf));
-					}
-					if (child.userData.data === 'camera')
-					{
-						this.camera = child;
-						const vb = Number(child.userData.viewBack);
-						if (!isNaN(vb)) this.viewBack = vb;
-						if (child.userData.centerHere === 'true') this.centerHere = true;
-					}
-					if (child.userData.data === 'wheel')
-					{
-						this.wheels.push(new Wheel(child));
-					}
-					if (child.userData.data === 'collision')
-					{
-						// Some Inthenew GLBs (e.g. rocketship.glb) tag boxes as
-						// userData.type='box' rather than userData.shape='box',
-						// presumably because they were re-exported under a
-						// different Blender plugin. Accept either spelling so
-						// the rocket actually has a chassis to stand on.
-						const shape = child.userData.shape ?? child.userData.type;
-						if (shape === 'box')
-						{
-							child.visible = false;
+						child.setEnabled(false);
 
-							let phys = new CANNON.Box(new CANNON.Vec3(child.scale.x, child.scale.y, child.scale.z));
-							phys.collisionFilterMask = ~CollisionGroups.TrimeshColliders;
-							this.collision.addShape(phys, new CANNON.Vec3(child.position.x, child.position.y, child.position.z));
-						}
-						else if (shape === 'sphere')
-						{
-							child.visible = false;
-
-							let phys = new CANNON.Sphere(child.scale.x);
-							phys.collisionFilterGroup = CollisionGroups.TrimeshColliders;
-							this.collision.addShape(phys, new CANNON.Vec3(child.position.x, child.position.y, child.position.z));
-						}
+						// Marker scale = half extents, Havok wants full extents.
+						const phys = new PhysicsShapeBox(Vector3.Zero(), Quaternion.Identity(), child.scaling.scale(2), model.scene);
+						applyCollisionFilter(phys, CollisionGroups.Default, ~CollisionGroups.TrimeshColliders);
+						this.addCollisionShape(phys, child.position);
 					}
-					if (child.userData.data === 'navmesh')
+					else if (shape === 'sphere')
 					{
-						child.visible = false;
+						child.setEnabled(false);
+
+						const phys = new PhysicsShapeSphere(Vector3.Zero(), child.scaling.x, model.scene);
+						applyCollisionFilter(phys, CollisionGroups.TrimeshColliders, ~0);
+						this.addCollisionShape(phys, child.position);
 					}
+				}
+				if (ud.data === 'navmesh')
+				{
+					child.setEnabled(false);
 				}
 			}
 		});
 
-		if (this.collision.shapes.length === 0)
+		if (this.collisionShape.getNumChildren() === 0)
 		{
 			console.warn('Vehicle ' + typeof(this) + ' has no collision data.');
 		}
@@ -525,6 +545,12 @@ export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
 		{
 			this.connectSeats();
 		}
+	}
+
+	private addCollisionShape(shape: PhysicsShape, offset: Vector3): void
+	{
+		shape.material = { friction: 0.01, restitution: 0 };
+		this.collisionShape.addChild(shape, offset.clone(), Quaternion.Identity());
 	}
 
 	private connectSeats(): void
@@ -544,7 +570,7 @@ export abstract class Vehicle extends THREE.Object3D implements IWorldEntity
 						// based on this seat's connected seats list
 						for (const secondSeat of this.seats)
 						{
-							if (secondSeat.seatPointObject.name === conn_seat_name) 
+							if (secondSeat.seatPointObject.name === conn_seat_name)
 							{
 								firstSeat.connectedSeats.push(secondSeat);
 							}

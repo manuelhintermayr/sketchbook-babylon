@@ -1,15 +1,16 @@
-import * as THREE from 'three';
+import { TransformNode } from '@babylonjs/core';
+
 import { SeatType } from '../enums/SeatType';
-import { Side } from '../enums/Side';
 import { IControllable } from '../interfaces/IControllable';
 import { VehicleDoor } from './VehicleDoor';
-import { Vehicle } from './Vehicle';
 import { Character } from '../characters/Character';
+import { LoadedModel } from '../core/LoadingManager';
+import * as Utils from '../core/FunctionLibrary';
 
 export class VehicleSeat
 {
 	public vehicle: IControllable;
-	public seatPointObject: THREE.Object3D;
+	public seatPointObject: TransformNode;
 
 	// String of names of connected seats
 	public connectedSeatsString: string;
@@ -18,51 +19,52 @@ export class VehicleSeat
 	public connectedSeats: VehicleSeat[] = [];
 
 	public type: SeatType;
-	public entryPoints: THREE.Object3D[] = [];
+	public entryPoints: TransformNode[] = [];
 	public door: VehicleDoor;
 
 	public occupiedBy: Character = null;
 
-	constructor(vehicle: IControllable, object: THREE.Object3D, gltf: any)
+	constructor(vehicle: IControllable, object: TransformNode, model: LoadedModel)
 	{
 		this.vehicle = vehicle;
 		this.seatPointObject = object;
 
-		if (object.hasOwnProperty('userData') && object.userData.hasOwnProperty('data'))
+		const ud = Utils.userData(object);
+		if (ud.hasOwnProperty('data'))
 		{
-			if (object.userData.hasOwnProperty('door_object')) 
+			if (ud.hasOwnProperty('door_object'))
 			{
-				this.door = new VehicleDoor(this, gltf.scene.getObjectByName(object.userData.door_object));
+				this.door = new VehicleDoor(this, Utils.findByName(model.root, ud.door_object) as TransformNode);
 			}
 
-			if (object.userData.hasOwnProperty('entry_points')) 
+			if (ud.hasOwnProperty('entry_points'))
 			{
-				let entry_points = (object.userData.entry_points as string).split(';');
+				let entry_points = (ud.entry_points as string).split(';');
 				for (const entry_point of entry_points)
 				{
 					if (entry_point.length > 0)
 					{
-						this.entryPoints.push(gltf.scene.getObjectByName(entry_point));
+						this.entryPoints.push(Utils.findByName(model.root, entry_point) as TransformNode);
 					}
 				}
 			}
 			else
 			{
-				console.error('Seat object ' + object + ' has no entry point reference property.');
+				console.error('Seat object ' + object.name + ' has no entry point reference property.');
 			}
 
-			if (object.userData.hasOwnProperty('seat_type')) 
+			if (ud.hasOwnProperty('seat_type'))
 			{
-				this.type = object.userData.seat_type;
+				this.type = ud.seat_type;
 			}
 			else
 			{
-				console.error('Seat object ' + object + ' has no seat type property.');
+				console.error('Seat object ' + object.name + ' has no seat type property.');
 			}
 
-			if (object.userData.hasOwnProperty('connected_seats')) 
+			if (ud.hasOwnProperty('connected_seats'))
 			{
-				this.connectedSeatsString = object.userData.connected_seats;
+				this.connectedSeatsString = ud.connected_seats;
 			}
 		}
 	}

@@ -1,9 +1,10 @@
-import * as THREE from 'three';
+import { TransformNode, Vector3 } from '@babylonjs/core';
 
 import { World } from '../World';
 import { Path } from '../scenarios/Path';
 import { NPCSpawnPoint } from '../spawn/NPCSpawnPoint';
 import { getDefaultDialogs } from '../scenarios/defaultDialogs';
+import * as Utils from '../../core/FunctionLibrary';
 
 // Hand-placed Anna / Ben / Carla / Dieter NPCs around the Inthenew
 // default spawn - gives the world some visible occupants without
@@ -25,13 +26,15 @@ export function injectDefaultSceneNPCs(world: World): void
 	const defaultScenario = world.scenarios.find((s) => s.id === 'default');
 	if (defaultScenario === undefined) return;
 
+	const scene = world.scene;
+
 	// Build a synthetic 4-node loop near the spawn and register it
 	// as a Path so two NPCs can FollowPath their way around it.
 	// Same pattern Test3Scene uses (data:'pathNode', nextNode/
 	// previousNode userData wiring) so we don't need a new code
 	// path on the consumer side.
-	const pathRoot = new THREE.Object3D();
-	pathRoot.userData = { data: 'path', name: 'default_npc_loop' };
+	const pathRoot = new TransformNode('default_npc_loop', scene);
+	Utils.setUserData(pathRoot, { data: 'path', name: 'default_npc_loop' });
 	const loopNodes: { name: string, prev: string, next: string, x: number, z: number }[] = [
 		{ name: 'npc_node_1', prev: 'npc_node_4', next: 'npc_node_2', x:  8, z:  5 },
 		{ name: 'npc_node_2', prev: 'npc_node_1', next: 'npc_node_3', x:  8, z: -5 },
@@ -40,13 +43,12 @@ export function injectDefaultSceneNPCs(world: World): void
 	];
 	for (const n of loopNodes)
 	{
-		const node = new THREE.Object3D();
-		node.name = n.name;
+		const node = new TransformNode(n.name, scene);
 		node.position.set(n.x, 18, n.z);
-		node.userData = { data: 'pathNode', name: n.name, previousNode: n.prev, nextNode: n.next };
-		pathRoot.add(node);
+		Utils.setUserData(node, { data: 'pathNode', name: n.name, previousNode: n.prev, nextNode: n.next });
+		node.parent = pathRoot;
 	}
-	defaultScenario.rootNode.add(pathRoot);
+	pathRoot.parent = defaultScenario.rootNode;
 	world.paths.push(new Path(pathRoot));
 
 	// Two walking NPCs (Anna, Ben) trace the loop in opposite
@@ -67,15 +69,16 @@ export function injectDefaultSceneNPCs(world: World): void
 
 	for (const s of npcSpawns)
 	{
-		const marker = new THREE.Object3D();
+		const marker = new TransformNode('npc_' + s.name, scene);
 		marker.position.set(s.x, s.y, s.z);
 		if (s.faceX !== undefined && s.faceZ !== undefined)
 		{
-			marker.lookAt(s.x + s.faceX, s.y, s.z + s.faceZ);
+			marker.lookAt(new Vector3(s.x + s.faceX, s.y, s.z + s.faceZ));
 		}
-		marker.userData.name = s.name;
-		if (s.firstNode !== undefined) marker.userData.first_node = s.firstNode;
-		defaultScenario.rootNode.add(marker);
+		const ud = Utils.userData(marker);
+		ud.name = s.name;
+		if (s.firstNode !== undefined) ud.first_node = s.firstNode;
+		marker.parent = defaultScenario.rootNode;
 
 		const dialogEntry = dialogs[s.name];
 		defaultScenario.spawnPoints.push(

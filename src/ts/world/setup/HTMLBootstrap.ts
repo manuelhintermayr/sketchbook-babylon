@@ -4,7 +4,7 @@ import { t } from '../../i18n';
 // Body-level DOM scaffolding World needs in place before rendering:
 // font links, the loading screen, the in-game UI container with the
 // GitHub corner + controls overlay slot, the planet-selection modal
-// the rocket flips visible at apogee, and the renderer's canvas.
+// the rocket flips visible at apogee, and the engine's canvas.
 // All written via insertAdjacentHTML - this only runs once at world
 // construction; the markup never changes after.
 export function bootstrapHTML(world: World): void
@@ -54,7 +54,7 @@ export function bootstrapHTML(world: World): void
 	document.body.insertAdjacentHTML('beforeend', `
 		<div id="ui-container" style="display: none;">
 			<div class="github-corner">
-				<a href="https://github.com/manuelhintermayr/sketchbook-upgraded" target="_blank" title="Fork me on GitHub">
+				<a href="https://github.com/manuelhintermayr/sketchbook-babylon" target="_blank" title="Fork me on GitHub">
 					<svg viewbox="0 0 100 100" fill="currentColor">
 						<title>Fork me on GitHub</title>
 						<path d="M0 0v100h100V0H0zm60 70.2h.2c1 2.7.3 4.7 0 5.2 1.4 1.4 2 3 2 5.2 0 7.4-4.4 9-8.7 9.5.7.7 1.3 2
@@ -88,7 +88,9 @@ export function bootstrapHTML(world: World): void
 		</div>
 	`);
 
-	// Canvas
-	document.body.appendChild(world.renderer.domElement);
-	world.renderer.domElement.id = 'canvas';
+	// Canvas. Babylon reads its render size from the element's CSS
+	// box, so it needs to be in the document before the first resize.
+	document.body.appendChild(world.canvas);
+	world.canvas.id = 'canvas';
+	world.engine.resize();
 }

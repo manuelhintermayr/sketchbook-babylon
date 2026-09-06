@@ -1,32 +1,20 @@
 /**
- * Based on "A Practical Analytic Model for Daylight"
- * aka The Preetham Model, the de facto standard analytic skydome model
- * http://www.cs.utah.edu/~shirley/papers/sunsky/sunsky.pdf
+ * Instanced grass-blade shaders, ported from tkkaushik369/socketControl.
+ * Based on "Realistic real-time grass rendering" by Eddie Lee, 2010
+ * (https://www.eddietree.com/grass).
  *
- * First implemented by Simon Wallner
- * http://www.simonwallner.at/projects/atmospheric-scattering
- *
- * Improved by Martin Upitis
- * http://blenderartists.org/forum/showthread.php?245954-preethams-sky-impementation-HDR
- *
- * Three.js integration by zz85 http://twitter.com/blurspline
- * Node.js module implementation by Danila Loginov https://loginov.rocks
+ * Babylon flavour: the built-in matrices are `world`, `view` and
+ * `projection` (three had modelMatrix / modelViewMatrix /
+ * projectionMatrix), and tone mapping is applied by the engine's image
+ * processing instead of an inline #if block.
  */
 
-// import * as THREE from 'three'
-
 export let GrassShader = {
-	/* uniforms: {
-		// map: { value: texture },
-		// alphaMap: { value: alphaMap },
-		// time: { type: 'float', value: 0 }
-	}, */
-
 	vertexShader: `
-    // precision mediump float;
-    // uniform mat4 modelViewMatrix;
-    // uniform mat4 projectionMatrix;
-    // uniform mat4 modelMatrix;
+    precision highp float;
+    uniform mat4 world;
+    uniform mat4 view;
+    uniform mat4 projection;
     // Up to MAX_PUSHERS world positions that bend nearby blades aside,
     // each with its own influence radius (a helicopter chassis pushes a
     // wider ring than a foot or a wheel). Filled each frame by
@@ -37,9 +25,9 @@ export let GrassShader = {
     uniform vec3 pushers[MAX_PUSHERS];
     uniform float pusherRadii[MAX_PUSHERS];
     uniform int pusherCount;
-    // attribute vec3 position;
+    attribute vec3 position;
+    attribute vec2 uv;
     attribute vec3 offset;
-    // attribute vec2 uv;
     attribute vec4 orientation;
     attribute float halfRootAngleSin;
     attribute float halfRootAngleCos;
@@ -141,7 +129,7 @@ export let GrassShader = {
       float halfAngle = noise * 0.15;
       vec4 windAngle = normalize(vec4(sin(halfAngle), 0.0, -sin(halfAngle), cos(halfAngle)));
 
-      vec3 vObjectPosition = (modelMatrix * vec4( 0.0, 0.0, 0.0, 1.0 )).xyz;
+      vec3 vObjectPosition = (world * vec4( 0.0, 0.0, 0.0, 1.0 )).xyz;
       vec3 bladeWorldPos = vObjectPosition + offset;
 
       // Loop the active pushers and keep the strongest distortion. Each
@@ -178,11 +166,11 @@ export let GrassShader = {
       vUv = uv;
 
       //Calculate final position of the vertex from the world offset and the above shenanigans
-      gl_Position = projectionMatrix * modelViewMatrix * vec4(offset + vPosition, 1.0 );
+      gl_Position = projection * view * world * vec4(offset + vPosition, 1.0 );
     }`,
 
 	fragmentShader: `
-    // precision mediump float;
+    precision highp float;
     uniform sampler2D map;
     uniform sampler2D alphaMap;
     varying vec2 vUv;
@@ -202,10 +190,5 @@ export let GrassShader = {
     //Add a shadow towards root
     col = mix(vec4(0.0, 0.1, 0.0, 1.0), col, frc);
     gl_FragColor = col;
-
-    #if defined( TONE_MAPPING )
-      gl_FragColor.rgb = toneMapping( gl_FragColor.rgb );
-    #endif
-
     }`,
 }

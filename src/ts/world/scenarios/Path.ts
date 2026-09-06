@@ -1,27 +1,31 @@
-import * as THREE from 'three';
+import { Node, TransformNode } from '@babylonjs/core';
+
 import { PathNode } from './PathNode';
+import * as Utils from '../../core/FunctionLibrary';
 
 export class Path
 {
 	public nodes: {[nodeName: string]: PathNode} = {};
-	private rootNode: THREE.Object3D;
+	private rootNode: TransformNode;
 
-	constructor(root: THREE.Object3D)
+	constructor(root: TransformNode)
 	{
 		this.rootNode = root;
 
-		this.rootNode.traverse((child) => {
+		Utils.traverse(this.rootNode, (child) => {
 			this.addNode(child);
 		});
 
 		this.connectNodes();
 	}
 
-	public addNode(child: any): void
+	public addNode(child: Node): void
 	{
-		if (child.hasOwnProperty('userData') && child.userData.hasOwnProperty('data'))
+		if (!(child instanceof TransformNode)) return;
+		const ud = Utils.userData(child);
+		if (ud.hasOwnProperty('data'))
 		{
-			if (child.userData.data === 'pathNode')
+			if (ud.data === 'pathNode')
 			{
 				let node = new PathNode(child, this);
 				this.nodes[child.name] = node;
@@ -36,8 +40,9 @@ export class Path
 			if (this.nodes.hasOwnProperty(nodeName))
 			{
 				const node = this.nodes[nodeName];
-				node.nextNode = this.nodes[node.object.userData.nextNode];
-				node.previousNode = this.nodes[node.object.userData.previousNode];
+				const ud = Utils.userData(node.object);
+				node.nextNode = this.nodes[ud.nextNode];
+				node.previousNode = this.nodes[ud.previousNode];
 			}
 		}
 	}

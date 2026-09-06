@@ -1,5 +1,18 @@
-import * as CANNON from 'cannon-es';
-import * as THREE from 'three';
+import {
+	Axis,
+	Constants,
+	Effect,
+	Material,
+	Mesh,
+	PhysicsBody,
+	PhysicsMotionType,
+	Quaternion,
+	ShaderMaterial,
+	Space,
+	TransformNode,
+	Vector3,
+	VertexBuffer,
+} from '@babylonjs/core';
 
 import { Vehicle } from './Vehicle';
 import { IControllable } from '../interfaces/IControllable';
@@ -10,6 +23,9 @@ import { EntityType } from '../enums/EntityType';
 import { ENGINE_PROFILES } from '../world/audio/EngineSound';
 import { commonVehicleControls } from '../core/CommonControls';
 import { t } from '../i18n';
+import { LoadedModel } from '../core/LoadingManager';
+import * as Utils from '../core/FunctionLibrary';
+import { PhysicsWorld } from '../physics/PhysicsWorld';
 
 // Ported from Inthenew/Sketchbook (MIT). The rocketship reuses the
 // vehicle scaffolding (chassis collision shapes, seat, rotors marked in
@@ -27,7 +43,7 @@ import { t } from '../i18n';
 // (Inthenew's upstream had a memory leak there), and the state machine
 // is named instead of being implicit in three booleans.
 type SmokeParticle = {
-	particle: THREE.Vector3;
+	particle: Vector3;
 	lifetime: number;
 	age: number;
 };
@@ -43,8 +59,8 @@ const ROCKET_MAX_Y = 5200;
 const MOON_HEIGHT = 3852.67;
 
 // Hand-authored coordinates for the two landing pads in world.glb.
-const EARTH_LANDING = new CANNON.Vec3(15.1903, 16.1283, -491.721);
-const MOON_LANDING = new CANNON.Vec3(15.2758, 3852.67, -11696.4);
+const EARTH_LANDING = new Vector3(15.1903, 16.1283, -491.721);
+const MOON_LANDING = new Vector3(15.2758, 3852.67, -11696.4);
 
 // Liftoff is four stages of acceleration. Each stage runs 25 ticks of
 // 200ms (5s per stage), so a full launch takes 20 seconds.
@@ -56,13 +72,50 @@ const LIFTOFF_TICK_MS = 200;
 // the chosen planet at constant velocity until the threshold is hit.
 const FLIGHT_TICK_MS = 200;
 
+const _velocity = new Vector3();
+const _up = new Vector3();
+const _globalUp = new Vector3(0, 1, 0);
+const _vertDamping = new Vector3();
+const _vertStab = new Vector3();
+
+// Textured, additive point sprites for the exhaust smoke - the same
+// look three's PointsMaterial gave, sized in world units with
+// perspective attenuation.
+Effect.ShadersStore['sketchbookSmokeVertexShader'] = `
+	precision highp float;
+	attribute vec3 position;
+	uniform mat4 worldView;
+	uniform mat4 projection;
+	uniform float pointScale;
+
+	void main()
+	{
+		vec4 viewPos = worldView * vec4(position, 1.0);
+		gl_PointSize = 0.5 * pointScale / max(0.1, -viewPos.z);
+		gl_Position = projection * viewPos;
+	}
+`;
+
+Effect.ShadersStore['sketchbookSmokeFragmentShader'] = `
+	precision highp float;
+	uniform sampler2D map;
+
+	void main()
+	{
+		vec4 col = texture2D(map, vec2(gl_PointCoord.x, 1.0 - gl_PointCoord.y));
+		gl_FragColor = col;
+	}
+`;
+
 export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 {
 	public entityType: EntityType = EntityType.RocketShip;
-	public rotors: THREE.Object3D[] = [];
+	public rotors: TransformNode[] = [];
 
 	protected enginePower = 0;
-	protected smokeSystem!: THREE.Points;
+	protected smokeSystem!: Mesh;
+	private smokeMaterial!: ShaderMaterial;
+	private smokePositions!: Float32Array;
 	private smokeParticles: SmokeParticle[] = [];
 
 	// Flight state. justBlasted is true from the moment the player
@@ -85,11 +138,11 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 
 	private menuClickHandlersBound = false;
 
-	constructor(gltf: any)
+	constructor(model: LoadedModel)
 	{
-		super(gltf);
+		super(model);
 
-		this.readRocketShipData(gltf);
+		this.readRocketShipData(model);
 		this.initSmoke();
 
 		this.actions = {
@@ -100,7 +153,7 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 			view: new KeyBinding('KeyV'),
 		};
 
-		// Rocket has its own auto-flight + KINEMATIC-pin landing - base
+		// Rocket has its own auto-flight + animated-pin landing - base
 		// stuck/flip recovery would fight with it.
 		this.recovery.stuckRecoveryEnabled = false;
 		this.recovery.flipRecoveryEnabled = false;
@@ -131,18 +184,18 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 		// Spin the rotors at a rate proportional to engine power.
 		for (const rotor of this.rotors)
 		{
-			rotor.rotateX(this.enginePower * timeStep * 30);
+			rotor.rotate(Axis.X, this.enginePower * timeStep * 30, Space.LOCAL);
 		}
 
 		// Smoke is only visible while the engines are firing during
 		// liftoff. Inthenew's heuristic: justBlasted true and the cabin
 		// not yet stable / landed.
 		const burning = this.justBlasted && !this.balancing && !this.landing;
-		this.smokeSystem.visible = burning;
+		this.smokeSystem.setEnabled(burning);
 		if (burning) this.updateSmoke(timeStep);
 	}
 
-	public physicsPreStep(body: CANNON.Body, _rocket: RocketShip): void
+	public physicsPreStep(body: PhysicsBody, _rocket: RocketShip): void
 	{
 		// Trigger: Space pressed and we're not already mid-flight.
 		if (this.actions.descend.isPressed && !this.justBlasted)
@@ -157,39 +210,42 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 		}
 
 		// Positional damping (xz only, vertical handled by stabilization).
-		body.velocity.x *= THREE.MathUtils.lerp(1, 0.995, this.enginePower);
-		body.velocity.z *= THREE.MathUtils.lerp(1, 0.995, this.enginePower);
-		body.angularDamping = 1;
+		body.getLinearVelocityToRef(_velocity);
+		_velocity.x *= Utils.lerp(1, 0.995, this.enginePower);
+		_velocity.z *= Utils.lerp(1, 0.995, this.enginePower);
+		body.setLinearVelocity(_velocity);
+		body.setAngularDamping(1);
 	}
 
 	// --- Liftoff -----------------------------------------------------
 
-	private startLiftoff(body: CANNON.Body): void
+	private startLiftoff(body: PhysicsBody): void
 	{
 		this.justBlasted = true;
 		if (this.world !== undefined) this.world.sfxBus.playRocketBoom();
-		const localUp = new THREE.Vector3(0, 1, 0);
+		const localUp = new Vector3(0, 1, 0);
 
 		let stage = 0;
 		let ticksThisStage = 0;
 		this.liftoffTimer = setInterval(() =>
 		{
+			if (body.isDisposed) return;
+
 			// targetY normally cuts off the loop before stage runs out,
 			// but if the player drops enginePower the climb slows down
 			// enough that stage hits 4. Without this guard LIFTOFF_STAGES[4]
 			// is undefined, undefined * enginePower = NaN, NaN seeps into
-			// body.velocity and EngineSound throws on the next AudioParam
+			// the body velocity and EngineSound throws on the next AudioParam
 			// write. Hold the last stage's thrust instead.
 			const safeStage = Math.min(stage, LIFTOFF_STAGES.length - 1);
 
-			const quat = new THREE.Quaternion(
-				body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w,
-			);
-			const up = localUp.clone().applyQuaternion(quat);
+			const up = localUp.clone().applyRotationQuaternionInPlace(this.rotationQuaternion);
 			const thrust = LIFTOFF_STAGES[safeStage] * this.enginePower;
-			body.velocity.x += up.x * thrust;
-			body.velocity.y += up.y * thrust;
-			body.velocity.z += up.z * thrust;
+			body.getLinearVelocityToRef(_velocity);
+			_velocity.x += up.x * thrust;
+			_velocity.y += up.y * thrust;
+			_velocity.z += up.z * thrust;
+			body.setLinearVelocity(_velocity);
 
 			ticksThisStage++;
 			if (ticksThisStage >= LIFTOFF_TICKS_PER_STAGE)
@@ -202,7 +258,7 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 				? ROCKET_MAX_Y
 				: ROCKET_MAX_Y * 0.4 + MOON_HEIGHT;
 
-			if (body.position.y >= targetY)
+			if (this.position.y >= targetY)
 			{
 				this.stopLiftoff();
 				this.balancing = true;
@@ -230,31 +286,29 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 
 	// --- Vertical stabilization (Inthenew's gravityCompensation) ----
 
-	private applyVerticalStabilization(body: CANNON.Body): void
+	private applyVerticalStabilization(body: PhysicsBody): void
 	{
-		const quat = new THREE.Quaternion(
-			body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w,
-		);
-		const up = new THREE.Vector3(0, 1, 0).applyQuaternion(quat);
-		const globalUp = new THREE.Vector3(0, 1, 0);
+		_up.set(0, 1, 0).applyRotationQuaternionInPlace(this.rotationQuaternion);
 
 		const gravity = this.world.physicsWorld.gravity;
-		let gravityCompensation = new CANNON.Vec3(-gravity.x, -gravity.y, -gravity.z).length();
+		let gravityCompensation = gravity.length();
 		gravityCompensation *= this.world.physicsFrameTime;
 		gravityCompensation *= 0.98;
-		const dot = globalUp.dot(up);
-		gravityCompensation *= Math.sqrt(THREE.MathUtils.clamp(dot, 0, 1));
+		const dot = Vector3.Dot(_globalUp, _up);
+		gravityCompensation *= Math.sqrt(Utils.clamp(dot, 0, 1));
 
-		const vertDamping = new THREE.Vector3(0, body.velocity.y, 0).multiplyScalar(-0.01);
-		const vertStab = up.clone().multiplyScalar(gravityCompensation).add(vertDamping);
-		vertStab.multiplyScalar(this.enginePower);
+		body.getLinearVelocityToRef(_velocity);
+		_vertDamping.set(0, _velocity.y, 0).scaleInPlace(-0.01);
+		_vertStab.copyFrom(_up).scaleInPlace(gravityCompensation).addInPlace(_vertDamping);
+		_vertStab.scaleInPlace(this.enginePower);
 
-		body.velocity.x += vertStab.x;
+		_velocity.x += _vertStab.x;
 		// Landing nudges the body downward at different rates per planet.
-		body.velocity.y += !this.landing
-			? vertStab.y
-			: vertStab.y - (this.goingTo === 'earth' ? 5 : 0.1);
-		body.velocity.z += vertStab.z;
+		_velocity.y += !this.landing
+			? _vertStab.y
+			: _vertStab.y - (this.goingTo === 'earth' ? 5 : 0.1);
+		_velocity.z += _vertStab.z;
+		body.setLinearVelocity(_velocity);
 
 		// Touchdown checks - once vertical position dips below the pad
 		// height we consider the landing complete and reset state so
@@ -265,11 +319,11 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 		// from moon to earth (goingTo is still 'moon' until dropCheckTimer
 		// fires), wedging the state machine and leaving dropTimer pushing
 		// velocity through the floor.
-		if (this.landing && body.position.y <= 16.1283 && this.goingTo === 'earth')
+		if (this.landing && this.position.y <= 16.1283 && this.goingTo === 'earth')
 		{
 			this.completeLanding();
 		}
-		else if (this.landing && body.position.y <= MOON_HEIGHT - 97 && this.goingTo === 'moon')
+		else if (this.landing && this.position.y <= MOON_HEIGHT - 97 && this.goingTo === 'moon')
 		{
 			this.completeLanding();
 		}
@@ -279,20 +333,23 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 	{
 		this.landing = false;
 		this.balancing = false;
-		this.collision.velocity.set(0, 0, 0);
-		this.collision.angularVelocity.set(0, 0, 0);
+		PhysicsWorld.zeroVelocity(this.collision);
 
-		// Cannon's solver keeps trying to resolve the rocket vs trimesh
+		// The solver keeps trying to resolve the rocket vs trimesh
 		// contact every step, and any tiny penetration produces an
 		// upward push that re-introduces velocity, so the body never
-		// truly settles on the pad. Pin it kinematic for the 1-second
-		// settle window - it stops responding to forces, gravity and
-		// collisions, then reverts to DYNAMIC so a fresh liftoff works.
-		const previousType = this.collision.type;
-		this.collision.type = CANNON.Body.KINEMATIC;
+		// truly settles on the pad. Pin it animated (kinematic) for the
+		// 1-second settle window - it stops responding to forces,
+		// gravity and collisions, then reverts to DYNAMIC so a fresh
+		// liftoff works.
+		this.collision.setMotionType(PhysicsMotionType.ANIMATED);
 		setTimeout(() =>
 		{
-			this.collision.type = previousType;
+			if (!this.collision.isDisposed)
+			{
+				this.collision.setMotionType(PhysicsMotionType.DYNAMIC);
+				this.collision.setMassProperties({ mass: 50, centerOfMass: new Vector3(0, 0, 0) });
+			}
 			this.justBlasted = false;
 		}, 1000);
 	}
@@ -336,16 +393,16 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 		// Commit the target up-front so applyVerticalStabilization and
 		// Sky.update see the new state immediately. Otherwise, if the
 		// dropCheckTimer (200 ms tick) misses the brief window where the
-		// body is below the pad threshold (cannon's collision response
-		// can bounce the body back up between ticks), goingTo and
-		// world.onMoon would never get reset and the sky would stay
-		// black on Earth after a moon round-trip.
+		// body is below the pad threshold (collision response can bounce
+		// the body back up between ticks), goingTo and world.onMoon would
+		// never get reset and the sky would stay black on Earth after a
+		// moon round-trip.
 		this.goingTo = target;
 		this.world.onMoon = target === 'moon';
 		this.landing = false;
 
 		const body = this.collision;
-		const fromMoon = body.position.z < -10000;
+		const fromMoon = this.position.z < -10000;
 		const toEarth = target === 'earth';
 
 		// Smooth long-distance travel only fires when the player is on
@@ -353,23 +410,25 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 		// just snap to the landing pad and start descending.
 		if (toEarth && fromMoon)
 		{
-			this.smoothTravel(body, 'earth', new CANNON.Vec3(0, 0, 1000), -491.721, 'z',
-				(b) => b.position.z >= -491.721,
-				new CANNON.Vec3(15.1903, 6000, -491.721));
+			this.smoothTravel(body, 'earth', new Vector3(0, 0, 1000), -491.721, 'z',
+				() => this.position.z >= -491.721,
+				new Vector3(15.1903, 6000, -491.721));
 		}
 		else if (!toEarth && !fromMoon)
 		{
-			this.smoothTravel(body, 'moon', new CANNON.Vec3(0, 0, -1000), -11696.4, 'z',
-				(b) => b.position.z <= -11696.4,
-				new CANNON.Vec3(15.2758, 6852.67, -11696.4));
+			this.smoothTravel(body, 'moon', new Vector3(0, 0, -1000), -11696.4, 'z',
+				() => this.position.z <= -11696.4,
+				new Vector3(15.2758, 6852.67, -11696.4));
 		}
 		else
 		{
 			// Already on or near the chosen planet - snap to the landing
 			// pad and let stabilization drop us down.
 			const pad = toEarth ? EARTH_LANDING : MOON_LANDING;
-			body.position.set(pad.x, pad.y, pad.z);
-			body.velocity.y = 0;
+			this.position.copyFrom(pad);
+			body.getLinearVelocityToRef(_velocity);
+			_velocity.y = 0;
+			body.setLinearVelocity(_velocity);
 			this.goingTo = target;
 			this.landing = true;
 			if (target === 'moon') this.world.onMoon = true;
@@ -378,51 +437,50 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 	}
 
 	private smoothTravel(
-		body: CANNON.Body,
+		body: PhysicsBody,
 		target: FlightTarget,
-		velocity: CANNON.Vec3,
+		velocity: Vector3,
 		_thresholdValue: number,
 		_axis: 'z',
-		thresholdReached: (body: CANNON.Body) => boolean,
-		afterPosition: CANNON.Vec3,
+		thresholdReached: () => boolean,
+		afterPosition: Vector3,
 	): void
 	{
-		body.angularDamping = 0.5;
+		body.setAngularDamping(0.5);
 		// Inthenew rotates the rocket sideways for the trip; the axis
 		// flips depending on direction so the nose points at the target.
-		const axis = new CANNON.Vec3(target === 'earth' ? 1 : -1, 0, 0);
-		const tilt = new CANNON.Quaternion();
-		tilt.setFromAxisAngle(axis, Math.PI / 2);
-		body.quaternion.copy(tilt);
+		const axis = new Vector3(target === 'earth' ? 1 : -1, 0, 0);
+		const tilt = Quaternion.RotationAxis(axis, Math.PI / 2);
+		PhysicsWorld.setNodeRotation(this, tilt);
 
 		// Constant velocity push toward the target.
-		this.travelTimer = setInterval(() => { body.velocity.copy(velocity); }, FLIGHT_TICK_MS);
+		this.travelTimer = setInterval(() => { if (!body.isDisposed) body.setLinearVelocity(velocity); }, FLIGHT_TICK_MS);
 
 		// Threshold check - when we cross over the target's xz, snap up
 		// to a high altitude and start the descent.
 		this.travelCheckTimer = setInterval(() =>
 		{
-			if (thresholdReached(body))
+			if (thresholdReached())
 			{
 				this.cancelTravelTimers();
-				body.velocity.set(0, 0, 0);
-				body.position.copy(afterPosition);
-				body.angularDamping = 1;
-				body.quaternion.set(0, 0, 0, 1);
+				PhysicsWorld.zeroVelocity(body);
+				this.position.copyFrom(afterPosition);
+				body.setAngularDamping(1);
+				PhysicsWorld.setNodeRotation(this, Quaternion.Identity());
 
 				// Start descent: constant downward velocity until the pad.
-				const descent = new CANNON.Vec3(0, -500, 0);
-				this.dropTimer = setInterval(() => { body.velocity.copy(descent); }, FLIGHT_TICK_MS);
+				const descent = new Vector3(0, -500, 0);
+				this.dropTimer = setInterval(() => { if (!body.isDisposed) body.setLinearVelocity(descent); }, FLIGHT_TICK_MS);
 
 				const padY = target === 'earth' ? 16.1283 : MOON_HEIGHT;
 				const finalPad = target === 'earth' ? EARTH_LANDING : MOON_LANDING;
 				this.dropCheckTimer = setInterval(() =>
 				{
-					if (body.position.y <= padY)
+					if (this.position.y <= padY)
 					{
 						this.cancelDropTimers();
-						body.velocity.set(0, 0, 0);
-						body.position.copy(finalPad);
+						PhysicsWorld.zeroVelocity(body);
+						this.position.copyFrom(finalPad);
 						this.goingTo = target;
 						this.landing = true;
 						this.world.onMoon = target === 'moon';
@@ -462,10 +520,9 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 
 	// Cancel every flight timer on world removal. Without this a
 	// scenario switch mid-liftoff or mid-flight leaves the setInterval
-	// callbacks ticking against a detached cannon body - they keep
-	// writing into body.velocity / body.position long after the rocket
-	// is gone. Hide the planet menu too so a stale "click moon" event
-	// from a stranded listener can't fire on a freshly-spawned rocket.
+	// callbacks ticking against a disposed body. Hide the planet menu
+	// too so a stale "click moon" event from a stranded listener can't
+	// fire on a freshly-spawned rocket.
 	public removeFromWorld(world: World): void
 	{
 		super.removeFromWorld(world);
@@ -500,11 +557,12 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 		]);
 	}
 
-	public readRocketShipData(gltf: any): void
+	public readRocketShipData(model: LoadedModel): void
 	{
-		gltf.scene.traverse((child: THREE.Object3D) =>
+		Utils.traverse(model.root, (child) =>
 		{
-			if (child.userData?.data === 'rotor')
+			if (!(child instanceof TransformNode)) return;
+			if (Utils.userData(child).data === 'rotor')
 			{
 				this.rotors.push(child);
 			}
@@ -515,27 +573,35 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 
 	private initSmoke(): void
 	{
-		const texture = new THREE.TextureLoader().load('src/img/smoke.png');
-		const material = new THREE.PointsMaterial({
-			map: texture,
-			blending: THREE.AdditiveBlending,
-			transparent: true,
-			depthWrite: false,
-			size: 0.5,
+		const scene = this.getScene();
+		const texture = Utils.loadTexture(scene, 'src/img/smoke.png');
+
+		this.smokeMaterial = new ShaderMaterial('smokeMaterial', scene, 'sketchbookSmoke', {
+			attributes: ['position'],
+			uniforms: ['worldView', 'projection', 'pointScale'],
+			samplers: ['map'],
+			needAlphaBlending: true,
 		});
+		this.smokeMaterial.fillMode = Material.PointFillMode;
+		this.smokeMaterial.alphaMode = Constants.ALPHA_ADD;
+		this.smokeMaterial.disableDepthWrite = true;
+		this.smokeMaterial.backFaceCulling = false;
+		this.smokeMaterial.setTexture('map', texture);
+		this.smokeMaterial.setFloat('pointScale', scene.getEngine().getRenderHeight() / 2);
 
-		const positions = new Float32Array(SMOKE_PARTICLE_COUNT * 3);
-		for (let i = 0; i < positions.length; i++)
+		this.smokePositions = new Float32Array(SMOKE_PARTICLE_COUNT * 3);
+		for (let i = 0; i < this.smokePositions.length; i++)
 		{
-			positions[i] = (Math.random() - 0.5) * 10;
+			this.smokePositions[i] = (Math.random() - 0.5) * 10;
 		}
-		const geometry = new THREE.BufferGeometry();
-		geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 
-		this.smokeSystem = new THREE.Points(geometry, material);
-		this.smokeSystem.frustumCulled = false;
-		this.smokeSystem.visible = false;
-		super.add(this.smokeSystem);
+		this.smokeSystem = new Mesh('rocketSmoke', scene);
+		this.smokeSystem.setVerticesData(VertexBuffer.PositionKind, this.smokePositions, true, 3);
+		this.smokeSystem.material = this.smokeMaterial;
+		this.smokeSystem.alwaysSelectAsActiveMesh = true;
+		this.smokeSystem.isPickable = false;
+		this.smokeSystem.setEnabled(false);
+		this.smokeSystem.parent = this;
 
 		this.smokeParticles = Array.from({ length: SMOKE_PARTICLE_COUNT }, () => this.createParticle());
 	}
@@ -543,7 +609,7 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 	private createParticle(): SmokeParticle
 	{
 		return {
-			particle: new THREE.Vector3(
+			particle: new Vector3(
 				Math.random() - 0.5,
 				(Math.random() - 0.5) * 2 - 1,
 				Math.random() - 0.5,
@@ -555,7 +621,6 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 
 	protected updateSmoke(delta: number): void
 	{
-		const positionAttribute = this.smokeSystem.geometry.getAttribute('position') as THREE.BufferAttribute;
 		this.smokeParticles.forEach((data, i) =>
 		{
 			data.age += delta;
@@ -565,8 +630,11 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 			}
 			const progress = data.age / data.lifetime;
 			data.particle.y -= delta * 5 * (1 - progress);
-			positionAttribute.setXYZ(i, data.particle.x, data.particle.y, data.particle.z);
+			this.smokePositions[i * 3] = data.particle.x;
+			this.smokePositions[i * 3 + 1] = data.particle.y;
+			this.smokePositions[i * 3 + 2] = data.particle.z;
 		});
-		positionAttribute.needsUpdate = true;
+		this.smokeSystem.updateVerticesData(VertexBuffer.PositionKind, this.smokePositions, false, false);
+		this.smokeMaterial.setFloat('pointScale', this.getScene().getEngine().getRenderHeight() / 2);
 	}
 }

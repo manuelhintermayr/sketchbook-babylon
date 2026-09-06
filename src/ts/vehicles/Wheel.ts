@@ -1,30 +1,32 @@
-import * as THREE from 'three';
-import { WheelInfo } from 'cannon-es';
+import { TransformNode, Vector3 } from '@babylonjs/core';
+
+import * as Utils from '../core/FunctionLibrary';
 
 export class Wheel
 {
-	public wheelObject: THREE.Object3D;
-	public position: THREE.Vector3;
+	public wheelObject: TransformNode;
+	public position: Vector3;
 	public steering: boolean = false;
 	public drive: string; // Drive type "fwd" or "rwd"
 	public rayCastWheelInfoIndex: number; // Linked to a raycast vehicle WheelInfo structure
 
-	constructor(wheelObject: THREE.Object3D)
+	constructor(wheelObject: TransformNode)
 	{
 		this.wheelObject = wheelObject;
 
-		this.position = wheelObject.position;
+		this.position = wheelObject.position.clone();
 
-		if (wheelObject.hasOwnProperty('userData') && wheelObject.userData.hasOwnProperty('data'))
+		const ud = Utils.userData(wheelObject);
+		if (ud.hasOwnProperty('data'))
 		{
-			if (wheelObject.userData.hasOwnProperty('steering')) 
+			if (ud.hasOwnProperty('steering'))
 			{
-				this.steering = (wheelObject.userData.steering === 'true');
+				this.steering = (ud.steering === 'true');
 			}
 
-			if (wheelObject.userData.hasOwnProperty('drive')) 
+			if (ud.hasOwnProperty('drive'))
 			{
-				this.drive = wheelObject.userData.drive;
+				this.drive = ud.drive;
 			}
 		}
 	}

@@ -1,18 +1,80 @@
-import { Sky as ThreeSky } from 'three/examples/jsm/objects/Sky.js';
-import * as THREE from 'three';
-import { World } from './World';
-import { EntityType } from '../enums/EntityType';
-import { UpdateOrder } from '../enums/UpdateOrder';
-import { RenderLayer } from '../enums/RenderLayers';
-import { IUpdatable } from '../interfaces/IUpdatable';
-import { CSM } from 'three/examples/jsm/csm/CSM.js';
+import {
+	CascadedShadowGenerator,
+	Color3,
+	Constants,
+	DirectionalLight,
+	HemisphericLight,
+	Material,
+	Mesh,
+	MeshBuilder,
+	Node,
+	ShaderMaterial,
+	ShadowGenerator,
+	StandardMaterial,
+	TransformNode,
+	Vector3,
+	VertexBuffer,
+	Effect,
+} from '@babylonjs/core';
+import { SkyMaterial } from '@babylonjs/materials';
 
-export class Sky extends THREE.Object3D implements IUpdatable
+import * as Utils from '../core/FunctionLibrary';
+import { World } from './World';
+import { UpdateOrder } from '../enums/UpdateOrder';
+import { markOutlineSkip } from '../enums/RenderLayers';
+import { IUpdatable } from '../interfaces/IUpdatable';
+
+// Star shell shader - constant screen-space point size, alpha fades in
+// with nightFactor, per-vertex twinkle phase. Registered once in
+// Effect.ShadersStore so ShaderMaterial can reference it by name.
+Effect.ShadersStore['sketchbookStarsVertexShader'] = `
+	precision highp float;
+	attribute vec3 position;
+	attribute float size;
+	attribute float twinklePhase;
+	uniform mat4 worldViewProjection;
+	uniform float nightFactor;
+	varying float vAlpha;
+	varying float vTwinkle;
+
+	void main()
+	{
+		vTwinkle = twinklePhase;
+		vAlpha = nightFactor;
+		// Constant screen-space size - the shell is at a fixed
+		// radius so distance attenuation just makes them tiny.
+		// Brightness fade lives entirely in vAlpha so the stars
+		// fade in without also visually shrinking to nothing.
+		gl_PointSize = size * 2.0;
+		gl_Position = worldViewProjection * vec4(position, 1.0);
+	}
+`;
+
+Effect.ShadersStore['sketchbookStarsFragmentShader'] = `
+	precision highp float;
+	uniform float time;
+	varying float vAlpha;
+	varying float vTwinkle;
+
+	void main()
+	{
+		if (vAlpha < 0.01) discard;
+		vec2 center = gl_PointCoord - 0.5;
+		float dist = length(center);
+		if (dist > 0.5) discard;
+		float twinkle = 0.7 + 0.3 * sin(time * 3.0 + vTwinkle * 10.0);
+		float alpha = (1.0 - dist * 2.0) * vAlpha * twinkle;
+		gl_FragColor = vec4(1.0, 1.0, 0.95, alpha);
+	}
+`;
+
+export class Sky extends TransformNode implements IUpdatable
 {
 	public updateOrder: number = UpdateOrder.Environment;
 
-	public sunPosition: THREE.Vector3 = new THREE.Vector3();
-	public csm: CSM;
+	public sunPosition: Vector3 = new Vector3();
+	public sunLight: DirectionalLight;
+	public shadowGenerator: CascadedShadowGenerator;
 
 	set theta(value: number) {
 		this._theta = value;
@@ -36,165 +98,194 @@ export class Sky extends THREE.Object3D implements IUpdatable
 	private _phi: number = 50;
 	private _theta: number = 145;
 
-	private hemiLight: THREE.HemisphereLight;
+	private hemiLight: HemisphericLight;
 	private maxHemiIntensity: number = 0.9;
 	private minHemiIntensity: number = 0.3;
 
-	private sky: ThreeSky;
-	private skyMesh: THREE.Mesh;
-	private skyMaterial: THREE.ShaderMaterial;
+	private skyMesh: Mesh;
+	private skyMaterial: SkyMaterial;
 
 	// Decorative black border around the moon when viewed from Earth.
-	// See the constructor for the BackSide-shell trick.
-	private moonOutlineShell: THREE.Mesh;
+	// See the constructor for the back-face-shell trick.
+	private moonOutlineShell: Mesh;
 
 	// Star field - only visible when the sun has dropped below the
 	// horizon or the player is in space. The shader uses a nightFactor
 	// uniform that we drive from the sun position each frame.
-	private starsPoints: THREE.Points;
-	private starsMaterial: THREE.ShaderMaterial;
+	private starsMesh: Mesh;
+	private starsMaterial: ShaderMaterial;
+	private starsTime: number = 0;
 
 	private world: World;
+	private lightDirection: Vector3 = new Vector3(0, -1, 0);
 
 	constructor(world: World)
 	{
-		super();
+		super('sky', world.scene);
 
 		this.world = world;
+		const scene = world.scene;
 
-		// Create sky for material
-		const sky = new ThreeSky();
-		sky.scale.setScalar( 450000 );
-		sky.visible = true;
-		
-		// Sky material
-		this.skyMaterial = new THREE.ShaderMaterial({
-			uniforms: THREE.UniformsUtils.clone(sky.material.uniforms),
-			fragmentShader: sky.material.fragmentShader,
-			vertexShader: sky.material.vertexShader,
-			side: THREE.BackSide
-		});
+		// Sky material - the same Preetham atmospheric-scattering model
+		// three's Sky example uses, driven by a sun direction.
+		this.skyMaterial = new SkyMaterial('skyMaterial', scene);
+		this.skyMaterial.backFaceCulling = false;
+		this.skyMaterial.useSunPosition = true;
+		this.skyMaterial.turbidity = 2;
+		this.skyMaterial.rayleigh = 1;
+		this.skyMaterial.mieCoefficient = 0.005;
+		this.skyMaterial.mieDirectionalG = 0.8;
+		this.skyMaterial.luminance = 1;
+		this.skyMaterial.disableDepthWrite = true;
 
 		// Mesh. Sky shell, Earth/Moon spheres, and the star points all
-		// move to OutlineSkip - they're "background" geometry whose
+		// go on OutlineSkip - they're "background" geometry whose
 		// silhouette would just create flickering Sobel noise on the
 		// outline pass without adding anything readable.
-		this.skyMesh = new THREE.Mesh(
-			new THREE.SphereGeometry(1000, 24, 12),
-			this.skyMaterial
-		);
-		this.skyMesh.layers.set(RenderLayer.OutlineSkip);
-		this.attach(this.skyMesh);
+		this.skyMesh = MeshBuilder.CreateSphere('skyShell', { diameter: 2000, segments: 24 }, scene);
+		this.skyMesh.material = this.skyMaterial;
+		this.skyMesh.parent = this;
+		this.skyMesh.isPickable = false;
+		this.skyMesh.alwaysSelectAsActiveMesh = true;
+		markOutlineSkip(this.skyMesh);
 
 		// Earth and Moon visuals (ported from Inthenew/Sketchbook).
-		// Both are FrontSide spheres, intentionally only visible from
+		// Both are front-side spheres, intentionally only visible from
 		// outside: the Earth sphere is centered at the world origin so
 		// the player only sees it once they land on the Moon, and the
 		// Moon sphere sits at Inthenew's hand-authored moon coordinates
 		// so it shows as a body in the sky from anywhere on Earth.
-		const textureLoader = new THREE.TextureLoader();
 		// 64x32 segments (was 24x12). Without the bump the silhouette
 		// reads as a polygonal staircase under FXAA + the new moon
 		// outline ring.
-		const earthMesh = new THREE.Mesh(
-			new THREE.SphereGeometry(5010, 64, 32),
-			new THREE.MeshBasicMaterial({
-				side: THREE.FrontSide,
-				map: textureLoader.load('src/img/equirectangular-earth.png'),
-			}),
-		);
-		earthMesh.layers.set(RenderLayer.OutlineSkip);
-		world.graphicsWorld.add(earthMesh);
+		const earthMesh = MeshBuilder.CreateSphere('earth', { diameter: 5010 * 2, segments: 32 }, scene);
+		earthMesh.material = this.unlitTextured('earthMaterial', 'src/img/equirectangular-earth.png');
+		earthMesh.isPickable = false;
+		markOutlineSkip(earthMesh);
 
 		// Inthenew uses radius 1252.5 (matching their gravity sphere).
 		// That makes the moon dominate the sky at its authored distance;
-		// halve the visual radius so it reads as a far-away body. Block 4
-		// will keep the original 1252.5 for the gravity sphere.
-		const moonMesh = new THREE.Mesh(
-			new THREE.SphereGeometry(626.25, 64, 32),
-			new THREE.MeshBasicMaterial({
-				side: THREE.FrontSide,
-				map: textureLoader.load('src/img/equirectangular-moon.png'),
-			}),
-		);
+		// halve the visual radius so it reads as a far-away body.
+		const moonMesh = MeshBuilder.CreateSphere('moon', { diameter: 626.25 * 2, segments: 32 }, scene);
+		moonMesh.material = this.unlitTextured('moonMaterial', 'src/img/equirectangular-moon.png');
 		moonMesh.position.set(15.2758, 3852.67, -11696.4);
-		moonMesh.layers.set(RenderLayer.OutlineSkip);
-		world.graphicsWorld.add(moonMesh);
+		moonMesh.isPickable = false;
+		markOutlineSkip(moonMesh);
 
 		// Cartoon-style outline ring around the moon: a slightly larger
-		// BackSide black sphere at the same position. Its back-facing
+		// back-face black sphere at the same position. Its back-facing
 		// polygons sit behind the moon's front face, so depth-test
 		// leaves the moon disk visible and only the thin annulus
 		// between the two silhouettes shows up as black. Hidden in
 		// space (see update) - up close the shell would just engulf
 		// the view in black.
-		this.moonOutlineShell = new THREE.Mesh(
-			new THREE.SphereGeometry(626.25 * 1.04, 64, 32),
-			new THREE.MeshBasicMaterial({
-				side: THREE.BackSide,
-				color: 0x000000,
-			}),
-		);
-		this.moonOutlineShell.position.copy(moonMesh.position);
-		this.moonOutlineShell.layers.set(RenderLayer.OutlineSkip);
-		world.graphicsWorld.add(this.moonOutlineShell);
+		this.moonOutlineShell = MeshBuilder.CreateSphere('moonOutline', { diameter: 626.25 * 1.04 * 2, segments: 32, sideOrientation: Mesh.BACKSIDE }, scene);
+		const outlineMat = new StandardMaterial('moonOutlineMaterial', scene);
+		outlineMat.disableLighting = true;
+		outlineMat.emissiveColor = Color3.Black();
+		outlineMat.diffuseColor = Color3.Black();
+		outlineMat.backFaceCulling = false;
+		this.moonOutlineShell.material = outlineMat;
+		this.moonOutlineShell.position.copyFrom(moonMesh.position);
+		this.moonOutlineShell.isPickable = false;
+		markOutlineSkip(this.moonOutlineShell);
 
 		// Stars - 2000 points on the upper hemisphere of a 800-unit
-		// shell. Camera-anchored each frame (this object's position
+		// shell. Camera-anchored each frame (this node's position
 		// follows world.camera), so the star field always surrounds the
 		// player. The shader fades them in as nightFactor goes up and
 		// adds a per-vertex twinkle phase. Pattern from
 		// manuelhintermayr-portfolio/three-js DayNightCycle Stars
 		// sub-component.
 		this.starsMaterial = this.buildStarsMaterial();
-		this.starsPoints = new THREE.Points(this.buildStarsGeometry(), this.starsMaterial);
-		this.starsPoints.frustumCulled = false;
-		this.starsPoints.layers.set(RenderLayer.OutlineSkip);
-		this.attach(this.starsPoints);
+		this.starsMesh = this.buildStarsMesh();
+		this.starsMesh.material = this.starsMaterial;
+		this.starsMesh.parent = this;
+		this.starsMesh.alwaysSelectAsActiveMesh = true;
+		this.starsMesh.isPickable = false;
+		markOutlineSkip(this.starsMesh);
 
-		// Ambient light
-		this.hemiLight = new THREE.HemisphereLight( 0xffffff, 0xffffff, 1.0 );
+		// Ambient light. Sky colour HSL(0.59, 0.4, 0.6) and ground colour
+		// HSL(0.095, 0.2, 0.75) from the three version, converted to RGB.
+		this.hemiLight = new HemisphericLight('hemiLight', new Vector3(0, 1, 0), scene);
+		this.hemiLight.diffuse = new Color3(0.44, 0.587, 0.76);
+		this.hemiLight.groundColor = new Color3(0.8, 0.757, 0.7);
+		this.hemiLight.specular = Color3.Black();
 		this.refreshHemiIntensity();
-		this.hemiLight.color.setHSL( 0.59, 0.4, 0.6 );
-		this.hemiLight.groundColor.setHSL( 0.095, 0.2, 0.75 );
-		this.hemiLight.position.set( 0, 50, 0 );
-		this.world.graphicsWorld.add( this.hemiLight );
 
-		// CSM: split callback pushes into the target array (three's built-in
-		// CSM API, replacing the legacy `return arr` style of three-csm).
-		let splitsCallback = (amount: number, near: number, far: number, target: number[]) =>
-		{
-			for (let i = amount - 1; i >= 0; i--)
-			{
-				target.push(Math.pow(1 / 4, i));
-			}
-		};
+		// Sun + cascaded shadow maps. three's CSM example got custom
+		// splits at 1/16, 1/4 and 1 of 250 m; Babylon's practical split
+		// with lambda 0.9 lands close enough. 1024 keeps shadow-map work
+		// down to ~3 MP/frame across the 3 cascades.
+		this.sunLight = new DirectionalLight('sun', new Vector3(-1, -1, -1), scene);
+		this.sunLight.intensity = 1.6;
+		this.sunLight.specular = Color3.Black();
+		this.sunLight.shadowMinZ = 0.1;
+		this.sunLight.shadowMaxZ = 250;
 
-		this.csm = new CSM({
-			//fov: 80,
-			maxFar: 250,	// maxFar
-			lightIntensity: 2.5,
-			cascades: 3,
-			// 1024 keeps shadow-map work down to ~3 MP/frame across the
-			// 3 cascades. 2048 looked marginally crisper on hard edges
-			// but cost 4× the GPU work and ~50 MB of VRAM.
-			shadowMapSize: 1024,
-			camera: world.camera,
-			parent: world.graphicsWorld,
-			mode: 'custom',
-			customSplitsCallback: splitsCallback
-		});
-		this.csm.fade = true;
+		this.shadowGenerator = new CascadedShadowGenerator(1024, this.sunLight);
+		this.shadowGenerator.numCascades = 3;
+		this.shadowGenerator.lambda = 0.9;
+		this.shadowGenerator.shadowMaxZ = 250;
+		this.shadowGenerator.stabilizeCascades = true;
+		this.shadowGenerator.autoCalcDepthBounds = false;
+		this.shadowGenerator.depthClamp = true;
+		this.shadowGenerator.cascadeBlendPercentage = 0.1;
+		this.shadowGenerator.usePercentageCloserFiltering = true;
+		this.shadowGenerator.filteringQuality = ShadowGenerator.QUALITY_MEDIUM;
+		this.shadowGenerator.bias = 0.002;
+		this.shadowGenerator.normalBias = 0.02;
 
 		this.refreshSunPosition();
-		
-		world.graphicsWorld.add(this);
+
 		world.registerUpdatable(this);
+	}
+
+	private unlitTextured(name: string, url: string): StandardMaterial
+	{
+		const mat = new StandardMaterial(name, this.world.scene);
+		mat.disableLighting = true;
+		mat.emissiveTexture = Utils.loadTexture(this.world.scene, url);
+		mat.diffuseColor = Color3.Black();
+		mat.specularColor = Color3.Black();
+		return mat;
+	}
+
+	// three's CSM wanted every material registered; Babylon's shadow
+	// generator wants the casting meshes. Walks the node and adds every
+	// mesh below it (and the node itself when it is one).
+	public registerShadowCaster(node: Node): void
+	{
+		const meshes = node.getChildMeshes(false);
+		if (node instanceof Mesh) meshes.push(node);
+		for (const mesh of meshes)
+		{
+			// Hidden helpers (collision proxies, navmeshes) must not throw
+			// shadows from geometry the player never sees.
+			if (!mesh.isEnabled() || !mesh.isVisible) continue;
+			this.shadowGenerator.addShadowCaster(mesh, false);
+			mesh.receiveShadows = true;
+		}
+	}
+
+	public unregisterShadowCaster(node: Node): void
+	{
+		const meshes = node.getChildMeshes(false);
+		if (node instanceof Mesh) meshes.push(node);
+		for (const mesh of meshes)
+		{
+			this.shadowGenerator.removeShadowCaster(mesh, false);
+		}
+	}
+
+	public setShadowsEnabled(enabled: boolean): void
+	{
+		this.sunLight.shadowEnabled = enabled;
 	}
 
 	public update(timeScale: number): void
 	{
-		this.position.copy(this.world.camera.position);
+		this.position.copyFrom(this.world.camera.position);
 		this.refreshSunPosition();
 
 		// Hide the atmosphere shell once the camera leaves Earth so the
@@ -202,7 +293,7 @@ export class Sky extends THREE.Object3D implements IUpdatable
 		// Threshold roughly matches Inthenew's launch apex - anything
 		// above there is in transit or on the moon.
 		const inSpace = this.world.onMoon || this.world.camera.position.y > 1500;
-		this.skyMesh.visible = !inSpace;
+		this.skyMesh.setEnabled(!inSpace);
 
 		// Outline ring only while earth-bound AND the global Outlines
 		// toggle is on. The shell is a separate mesh, not part of the
@@ -211,22 +302,19 @@ export class Sky extends THREE.Object3D implements IUpdatable
 		// Past the atmosphere boundary the camera approaches the moon
 		// and slips inside the shell, which then renders as a solid
 		// black void - hence the inSpace half of the condition.
-		this.moonOutlineShell.visible = !inSpace && this.world.params?.Outlines === true;
+		this.moonOutlineShell.setEnabled(!inSpace && this.world.params?.Outlines === true);
 
 		// Stars: linear ramp from late-afternoon (sunY=2, ~phi 168) to
-		// deep dusk (sunY=-3, ~phi 197). Earlier curve kept this squared
-		// from -sunY/10, which only became visible when the sun had
-		// dropped halfway to nadir - by which point the player had
-		// already been staring at a black sky for a while wondering
-		// where the stars were. In space we want them at full brightness
-		// regardless of sun position.
+		// deep dusk (sunY=-3, ~phi 197). In space we want them at full
+		// brightness regardless of sun position.
 		const sunY = this.sunPosition.y;
-		const nightFactor = inSpace ? 1.0 : THREE.MathUtils.clamp((2 - sunY) / 5, 0, 1);
-		this.starsMaterial.uniforms.nightFactor.value = nightFactor;
-		this.starsMaterial.uniforms.time.value += timeScale;
+		const nightFactor = inSpace ? 1.0 : Utils.clamp((2 - sunY) / 5, 0, 1);
+		this.starsTime += timeScale;
+		this.starsMaterial.setFloat('nightFactor', nightFactor);
+		this.starsMaterial.setFloat('time', this.starsTime);
 
-		this.csm.update(); // Removed argument
-		this.csm.lightDirection = new THREE.Vector3(-this.sunPosition.x, -this.sunPosition.y, -this.sunPosition.z).normalize();
+		this.lightDirection.set(-this.sunPosition.x, -this.sunPosition.y, -this.sunPosition.z).normalize();
+		this.sunLight.direction.copyFrom(this.lightDirection);
 	}
 
 	public refreshSunPosition(): void
@@ -237,7 +325,7 @@ export class Sky extends THREE.Object3D implements IUpdatable
 		this.sunPosition.y = sunDistance * Math.sin(this._phi * Math.PI / 180);
 		this.sunPosition.z = sunDistance * Math.cos(this._theta * Math.PI / 180) * Math.cos(this._phi * Math.PI / 180);
 
-		this.skyMaterial.uniforms.sunPosition.value.copy(this.sunPosition);
+		this.skyMaterial.sunPosition.copyFrom(this.sunPosition);
 	}
 
 	public refreshHemiIntensity(): void
@@ -245,7 +333,7 @@ export class Sky extends THREE.Object3D implements IUpdatable
 		this.hemiLight.intensity = this.minHemiIntensity + Math.pow(1 - (Math.abs(this._phi - 90) / 90), 0.25) * (this.maxHemiIntensity - this.minHemiIntensity);
 	}
 
-	private buildStarsGeometry(): THREE.BufferGeometry
+	private buildStarsMesh(): Mesh
 	{
 		const STAR_COUNT = 2000;
 		const SHELL_RADIUS = 800;
@@ -272,60 +360,27 @@ export class Sky extends THREE.Object3D implements IUpdatable
 			phases[i] = Math.random() * Math.PI * 2;
 		}
 
-		const geo = new THREE.BufferGeometry();
-		geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-		geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
-		geo.setAttribute('twinklePhase', new THREE.BufferAttribute(phases, 1));
-		return geo;
+		const scene = this.world.scene;
+		const mesh = new Mesh('stars', scene);
+		mesh.setVerticesData(VertexBuffer.PositionKind, positions, false, 3);
+		mesh.setVerticesBuffer(new VertexBuffer(scene.getEngine(), sizes, 'size', false, false, 1));
+		mesh.setVerticesBuffer(new VertexBuffer(scene.getEngine(), phases, 'twinklePhase', false, false, 1));
+		return mesh;
 	}
 
-	private buildStarsMaterial(): THREE.ShaderMaterial
+	private buildStarsMaterial(): ShaderMaterial
 	{
-		return new THREE.ShaderMaterial({
-			vertexShader: `
-				attribute float size;
-				attribute float twinklePhase;
-				uniform float nightFactor;
-				varying float vAlpha;
-				varying float vTwinkle;
-
-				void main()
-				{
-					vTwinkle = twinklePhase;
-					vAlpha = nightFactor;
-					vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-					// Constant screen-space size - the shell is at a fixed
-					// radius so distance attenuation just makes them tiny.
-					// Brightness fade lives entirely in vAlpha so the stars
-					// fade in without also visually shrinking to nothing.
-					gl_PointSize = size * 2.0;
-					gl_Position = projectionMatrix * mvPosition;
-				}
-			`,
-			fragmentShader: `
-				uniform float time;
-				varying float vAlpha;
-				varying float vTwinkle;
-
-				void main()
-				{
-					if (vAlpha < 0.01) discard;
-					vec2 center = gl_PointCoord - 0.5;
-					float dist = length(center);
-					if (dist > 0.5) discard;
-					float twinkle = 0.7 + 0.3 * sin(time * 3.0 + vTwinkle * 10.0);
-					float alpha = (1.0 - dist * 2.0) * vAlpha * twinkle;
-					gl_FragColor = vec4(1.0, 1.0, 0.95, alpha);
-				}
-			`,
-			uniforms:
-			{
-				time: { value: 0 },
-				nightFactor: { value: 0 },
-			},
-			transparent: true,
-			blending: THREE.AdditiveBlending,
-			depthWrite: false,
+		const material = new ShaderMaterial('starsMaterial', this.world.scene, 'sketchbookStars', {
+			attributes: ['position', 'size', 'twinklePhase'],
+			uniforms: ['worldViewProjection', 'nightFactor', 'time'],
+			needAlphaBlending: true,
 		});
+		material.fillMode = Material.PointFillMode;
+		material.alphaMode = Constants.ALPHA_ADD;
+		material.disableDepthWrite = true;
+		material.backFaceCulling = false;
+		material.setFloat('nightFactor', 0);
+		material.setFloat('time', 0);
+		return material;
 	}
 }

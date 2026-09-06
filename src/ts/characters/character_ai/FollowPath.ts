@@ -1,12 +1,12 @@
-import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
-import * as Utils from '../../core/FunctionLibrary';
+import { Vector3 } from '@babylonjs/core';
 
+import * as Utils from '../../core/FunctionLibrary';
 import { FollowTarget } from './FollowTarget';
 import { ICharacterAI } from '../../interfaces/ICharacterAI';
 import { PathNode } from '../../world/scenarios/PathNode';
 import { Vehicle } from '../../vehicles/Vehicle';
 import { EntityType } from '../../enums/EntityType';
+import { PhysicsWorld } from '../../physics/PhysicsWorld';
 
 export class FollowPath extends FollowTarget implements ICharacterAI
 {
@@ -28,11 +28,11 @@ export class FollowPath extends FollowTarget implements ICharacterAI
 		super.update(timeStep);
 
 		// Todo only compute once in followTarget
-		let source = new THREE.Vector3();
-		let target = new THREE.Vector3();
-		this.character.getWorldPosition(source);
-		this.target.getWorldPosition(target);
-		let viewVector = new THREE.Vector3().subVectors(target, source);
+		let source = new Vector3();
+		let target = new Vector3();
+		Utils.getWorldPosition(this.character, source);
+		Utils.getWorldPosition(this.target, target);
+		let viewVector = target.subtract(source);
 		viewVector.y = 0;
 
 		// All the throttle / reverse / stuck-detection branches below
@@ -42,11 +42,12 @@ export class FollowPath extends FollowTarget implements ICharacterAI
 		// for them - FollowTarget already drives the on-foot motion.
 		if (this.character.controlledObject !== undefined)
 		{
-			let targetToNextNode = this.targetNode.nextNode.object.position.clone().sub(this.targetNode.object.position);
+			const vehicle = this.character.controlledObject as unknown as Vehicle;
+			let targetToNextNode = this.targetNode.nextNode.object.position.subtract(this.targetNode.object.position);
 			targetToNextNode.y = 0;
 			targetToNextNode.normalize();
-			let slowDownAngle = viewVector.clone().normalize().dot(targetToNextNode);
-			let speed = (this.character.controlledObject as unknown as Vehicle).collision.velocity.length();
+			let slowDownAngle = Vector3.Dot(viewVector.normalizeToNew(), targetToNextNode);
+			let speed = PhysicsWorld.linearSpeed(vehicle.collision);
 
 			const isBoat = this.character.controlledObject.entityType === EntityType.Boat;
 
@@ -61,17 +62,15 @@ export class FollowPath extends FollowTarget implements ICharacterAI
 			// would teleport them constantly; skip it for Boat.
 			if (!isBoat)
 			{
-				if (speed < 1 || (this.character.controlledObject as unknown as Vehicle).rayCastVehicle.numWheelsOnGround === 0) this.staleTimer += timeStep;
+				if (speed < 1 || vehicle.rayCastVehicle.numWheelsOnGround === 0) this.staleTimer += timeStep;
 				else this.staleTimer = 0;
 				if (this.staleTimer > 5)
 				{
-					let worldPos = new THREE.Vector3();
-					this.targetNode.object.getWorldPosition(worldPos);
+					let worldPos = new Vector3();
+					Utils.getWorldPosition(this.targetNode.object, worldPos);
 					worldPos.y += 3;
-					(this.character.controlledObject as unknown as Vehicle).collision.position = Utils.cannonVector(worldPos);
-					(this.character.controlledObject as unknown as Vehicle).collision.interpolatedPosition = Utils.cannonVector(worldPos);
-					(this.character.controlledObject as unknown as Vehicle).collision.angularVelocity = new CANNON.Vec3();
-					(this.character.controlledObject as unknown as Vehicle).collision.quaternion.copy((this.character.controlledObject as unknown as Vehicle).collision.initQuaternion);
+					PhysicsWorld.teleport(vehicle.collision, worldPos, vehicle.initQuaternion);
+					PhysicsWorld.zeroVelocity(vehicle.collision);
 					this.staleTimer = 0;
 				}
 			}

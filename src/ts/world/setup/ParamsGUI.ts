@@ -1,15 +1,15 @@
 import GUI from 'lil-gui';
-import CannonDebugger from 'cannon-es-debugger';
 
 import { World } from '../World';
 import { UIManager } from '../../core/UIManager';
 import { Car } from '../../vehicles/Car';
+import { setPhysicsDebugEnabled } from './RendererPipeline';
 
 // Builds the lil-gui debug panel and the params object that backs it.
 // All onChange wiring lives here so that callers (SettingsModal, the
 // pause-menu Settings card) can route writes through the matching
 // controller's setValue() and inherit the side effects for free -
-// CSM enable/disable, mouse sensitivity push to CameraOperator, etc.
+// shadow enable/disable, mouse sensitivity push to CameraOperator, etc.
 //
 // Persistence: the entire gui state snapshot serializes into
 // localStorage('sketchbook-settings') on every onFinishChange and
@@ -45,8 +45,8 @@ export function createParamsGUI(world: World): void
 		Damping_Relaxation: 2,
 		Engine_Force: 10,
 		// Audio mix. Master applies to all positional + procedural
-		// sources via the shared THREE.AudioListener attached to the
-		// camera, AND scales BackgroundMusic on top of Music_Volume.
+		// sources via the shared AudioListener attached to the camera,
+		// AND scales BackgroundMusic on top of Music_Volume.
 		// SFX_Volume is still reserved (no per-bus SFX routing yet).
 		Master_Volume: 80,
 		Music_Volume: 60,
@@ -67,12 +67,6 @@ export function createParamsGUI(world: World): void
 		// want the toon look can flip it explicitly in the settings.
 		Outlines: false,
 		Labels: true,
-		// Default off - light mode is the canonical look. The Title
-		// screen toggle and the Settings modal both flip this; lil-gui
-		// persists the value through `gui.save()` so the choice
-		// survives reloads. The Title-screen toggle reads the existing
-		// `html.dark` class on its first render so it doesn't have to
-		// know about the params object.
 		// Default off - light mode is canonical. Source of truth is
 		// localStorage('sketchbook.darkMode'); the Title-screen toggle
 		// writes there before World even exists. The Settings modal
@@ -141,7 +135,7 @@ export function createParamsGUI(world: World): void
 
 	// Per-car raycast-vehicle tuning (ported from Inthenew). Each
 	// slider's onChange iterates the spawned cars and pushes the new
-	// value into their cannon wheelInfos / engine factor. Defaults
+	// value into their raycast wheel infos / engine factor. Defaults
 	// match the constants the cars are constructed with.
 	const vehiclesFolder = gui.addFolder('Vehicles');
 	const applyToAllCars = (property: string, value: number, asEngineForce = false) =>
@@ -174,10 +168,7 @@ export function createParamsGUI(world: World): void
 	settingsFolder.add(world.params, 'Shadows')
 		.onChange((enabled) =>
 		{
-			world.sky.csm.lights.forEach((light) =>
-			{
-				light.castShadow = !!enabled;
-			});
+			world.sky.setShadowsEnabled(!!enabled);
 		});
 	settingsFolder.add(world.params, 'Mouse_Sensitivity', 0, 1)
 		.onChange((value) =>
@@ -187,34 +178,14 @@ export function createParamsGUI(world: World): void
 	settingsFolder.add(world.params, 'Debug_Physics')
 		.onChange((enabled) =>
 		{
-			if (enabled)
-			{
-				// cannon-es-debugger adds meshes to the scene as the physics
-				// world changes but does not expose a cleanup method. Track
-				// them via onInit so we can remove them again when the user
-				// turns debug rendering back off.
-				world.cannonDebugMeshes = [];
-				world.cannonDebugRenderer = CannonDebugger(
-					world.graphicsWorld,
-					world.physicsWorld,
-					{
-						onInit: (_body, mesh) => world.cannonDebugMeshes.push(mesh),
-					},
-				);
-			}
-			else
-			{
-				for (const mesh of world.cannonDebugMeshes)
-				{
-					world.graphicsWorld.remove(mesh);
-				}
-				world.cannonDebugMeshes = [];
-				world.cannonDebugRenderer = undefined;
-			}
+			// Babylon's PhysicsViewer draws one wireframe per body; the
+			// render pipeline keeps it in sync with bodies that spawn or
+			// leave while the toggle is on.
+			setPhysicsDebugEnabled(world, !!enabled);
 
 			world.characters.forEach((char) =>
 			{
-				char.raycastBox.visible = enabled;
+				char.raycastBox.setEnabled(enabled);
 			});
 		});
 	settingsFolder.add(world.params, 'Debug_FPS')
@@ -244,7 +215,7 @@ export function createParamsGUI(world: World): void
 		// Mirror to the title-screen mute key so the title screen
 		// reflects the current state on next boot.
 		localStorage.setItem('sketchbook.soundMuted', on ? 'false' : 'true');
-		// Push to the THREE.AudioListener so 3D-positional sources
+		// Push to the AudioListener so 3D-positional sources
 		// (BirdSound, CharacterSfx, Speaker) get muted alongside the
 		// continuous synths that already gate through getMasterVolume.
 		world.applyAudioListenerVolume();

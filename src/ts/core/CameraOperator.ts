@@ -1,28 +1,45 @@
-import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
+import { Matrix, PhysicsBody, Quaternion, TargetCamera, Vector2, Vector3 } from '@babylonjs/core';
+import * as _ from 'lodash';
+
 import * as Utils from './FunctionLibrary';
 import { World } from '../world/World';
 import { IInputReceiver } from '../interfaces/IInputReceiver';
 import { KeyBinding } from './KeyBinding';
 import { Character } from '../characters/Character';
-import * as _ from 'lodash';
 import { IUpdatable } from '../interfaces/IUpdatable';
 import { EntityType } from '../enums/EntityType';
 import { UpdateOrder } from '../enums/UpdateOrder';
+import { PhysicsWorld } from '../physics/PhysicsWorld';
 import { t } from '../i18n';
+
+// Scratch for the per-frame vector math - the free-cam integration and
+// the first-person auto-return run every frame.
+const _dir = new Vector3();
+const _up = new Vector3();
+const _right = new Vector3();
+const _forward = new Vector3();
+const _lookDir = new Vector3();
+const _targetPos = new Vector3();
+const _lookAt = new Matrix();
+const _desired = new Quaternion();
+const _LOCAL_UP = new Vector3(0, 1, 0);
+const _LOCAL_RIGHT = new Vector3(1, 0, 0);
+// Cameras look down their local -Z in a right-handed scene.
+const _LOCAL_FORWARD = new Vector3(0, 0, -1);
+const _FORWARD_AXIS = new Vector3(0, 0, 1);
 
 export class CameraOperator implements IInputReceiver, IUpdatable
 {
 	public updateOrder: number = UpdateOrder.Camera;
 
 	public world: World;
-	public camera: THREE.Camera;
-	public target: THREE.Vector3;
-	public sensitivity: THREE.Vector2;
+	public camera: TargetCamera;
+	public target: Vector3;
+	public sensitivity: Vector2;
 	public radius: number = 1;
 	public theta: number;
 	public phi: number;
-	public onMouseDownPosition: THREE.Vector2;
+	public onMouseDownPosition: Vector2;
 	public onMouseDownTheta: any;
 	public onMouseDownPhi: any;
 	public targetRadius: number = 1;
@@ -46,19 +63,19 @@ export class CameraOperator implements IInputReceiver, IUpdatable
 	private autoRotateDelay: number = 400;
 	private autoRotateLerpFactor: number = 0.1;
 
-	constructor(world: World, camera: THREE.Camera, sensitivityX: number = 1, sensitivityY: number = sensitivityX * 0.8)
+	constructor(world: World, camera: TargetCamera, sensitivityX: number = 1, sensitivityY: number = sensitivityX * 0.8)
 	{
 		this.world = world;
 		this.camera = camera;
-		this.target = new THREE.Vector3();
-		this.sensitivity = new THREE.Vector2(sensitivityX, sensitivityY);
+		this.target = new Vector3();
+		this.sensitivity = new Vector2(sensitivityX, sensitivityY);
 
 		this.movementSpeed = 0.06;
 		this.radius = 3;
 		this.theta = 0;
 		this.phi = 0;
 
-		this.onMouseDownPosition = new THREE.Vector2();
+		this.onMouseDownPosition = new Vector2();
 		this.onMouseDownTheta = this.theta;
 		this.onMouseDownPhi = this.phi;
 
@@ -77,7 +94,7 @@ export class CameraOperator implements IInputReceiver, IUpdatable
 
 	public setSensitivity(sensitivityX: number, sensitivityY: number = sensitivityX): void
 	{
-		this.sensitivity = new THREE.Vector2(sensitivityX, sensitivityY);
+		this.sensitivity = new Vector2(sensitivityX, sensitivityY);
 	}
 
 	public setRadius(value: number, instantly: boolean = false): void
@@ -101,7 +118,7 @@ export class CameraOperator implements IInputReceiver, IUpdatable
 	// Convert the camera's quaternion back into the theta/phi spherical
 	// coordinates the controller uses, so the auto-rotate slerp leaves
 	// the angles consistent for the next mouse-driven move.
-	private quaternionToThetaPhi(q: THREE.Quaternion): { theta: number; phi: number }
+	private quaternionToThetaPhi(q: Quaternion): { theta: number; phi: number }
 	{
 		const theta = Math.atan2(2 * (q.w * q.y + q.x * q.z), 1 - 2 * (q.y * q.y + q.x * q.x));
 		const sinPhi = 2 * (q.w * q.x - q.y * q.z);
@@ -114,20 +131,25 @@ export class CameraOperator implements IInputReceiver, IUpdatable
 		};
 	}
 
+	private lookAt(target: Vector3): void
+	{
+		this.camera.upVector.set(0, 1, 0);
+		this.camera.setTarget(target);
+	}
+
 	public update(timeScale: number): void
 	{
 		if (this.followMode === true)
 		{
-			this.camera.position.y = THREE.MathUtils.clamp(this.camera.position.y, this.target.y, Number.POSITIVE_INFINITY);
-			this.camera.lookAt(this.target);
-			let newPos = this.target.clone().add(new THREE.Vector3().subVectors(this.camera.position, this.target).normalize().multiplyScalar(this.targetRadius));
-			this.camera.position.x = newPos.x;
-			this.camera.position.y = newPos.y;
-			this.camera.position.z = newPos.z;
+			this.camera.position.y = Utils.clamp(this.camera.position.y, this.target.y, Number.POSITIVE_INFINITY);
+			this.lookAt(this.target);
+			this.camera.position.subtractToRef(this.target, _dir);
+			_dir.normalize().scaleInPlace(this.targetRadius);
+			this.camera.position.copyFrom(this.target).addInPlace(_dir);
 		}
 		else
 		{
-			this.radius = THREE.MathUtils.lerp(this.radius, this.targetRadius, 0.1);
+			this.radius = Utils.lerp(this.radius, this.targetRadius, 0.1);
 
 			this.camera.position.x = this.target.x + this.radius * Math.sin(this.theta * Math.PI / 180) * Math.cos(this.phi * Math.PI / 180);
 			this.camera.position.y = this.target.y + this.radius * Math.sin(this.phi * Math.PI / 180);
@@ -139,45 +161,49 @@ export class CameraOperator implements IInputReceiver, IUpdatable
 			// instead of sinking the cam.
 			const minY = this.target.y - 0.3;
 			if (this.camera.position.y < minY) this.camera.position.y = minY;
-			this.camera.updateMatrix();
 
 			// 'Look around' auto-return: in first-person inside a non-rocket
 			// vehicle, after autoRotateDelay ms of no mouse movement, slerp
 			// the camera quaternion back toward the vehicle's forward axis.
 			// The rocket is excluded because Inthenew leaves it untouched
 			// during the auto-flight sequence.
-			const vehicle = this.characterCaller?.controlledObject as { firstPerson?: boolean; quaternion?: THREE.Quaternion; entityType?: EntityType } | undefined;
+			const vehicle = this.characterCaller?.controlledObject as { firstPerson?: boolean; rotationQuaternion?: Quaternion; entityType?: EntityType } | undefined;
 			const isInFirstPersonVehicle = vehicle?.firstPerson === true
 				&& vehicle?.entityType !== undefined
 				&& vehicle.entityType !== EntityType.RocketShip;
-			if (isInFirstPersonVehicle && vehicle?.quaternion)
+			if (isInFirstPersonVehicle && vehicle?.rotationQuaternion)
 			{
-				const lookDir = new THREE.Vector3(0, 0, -1).applyQuaternion(vehicle.quaternion);
-				const targetPos = this.target.clone().add(lookDir);
+				_lookDir.copyFrom(_FORWARD_AXIS).applyRotationQuaternionInPlace(vehicle.rotationQuaternion);
+				this.target.addToRef(_lookDir, _targetPos);
 				const since = performance.now() - this.lastMouseMoveTime;
 				if (since > this.autoRotateDelay)
 				{
-					const dummy = new THREE.Object3D();
-					dummy.position.copy(this.camera.position);
-					dummy.lookAt(targetPos);
-					const factor = this.camera.quaternion.angleTo(dummy.quaternion) < 0.05
+					// Orientation of a camera at our position looking along
+					// the vehicle's forward axis - same construction
+					// TargetCamera.setTarget uses, without moving the camera.
+					Matrix.LookAtRHToRef(this.camera.position, _targetPos, _LOCAL_UP, _lookAt);
+					_lookAt.invert();
+					Quaternion.FromRotationMatrixToRef(_lookAt, _desired);
+
+					const current = this.camera.rotationQuaternion;
+					const factor = Quaternion.Dot(current, _desired) > Math.cos(0.025)
 						? 0.025
 						: this.autoRotateLerpFactor;
-					this.camera.quaternion.slerp(dummy.quaternion, factor);
-					this.camera.up.set(0, 1, 0);
-					const angles = this.quaternionToThetaPhi(this.camera.quaternion);
+					Quaternion.SlerpToRef(current, _desired, factor, current);
+					current.toEulerAnglesToRef(this.camera.rotation);
+					this.camera.upVector.set(0, 1, 0);
+					const angles = this.quaternionToThetaPhi(current);
 					this.theta = angles.theta;
 					this.phi = angles.phi;
 				}
 				else
 				{
-					this.camera.up.set(0, 1, 0);
-					this.camera.lookAt(this.target);
+					this.lookAt(this.target);
 				}
 			}
 			else
 			{
-				this.camera.lookAt(this.target);
+				this.lookAt(this.target);
 			}
 		}
 	}
@@ -198,20 +224,18 @@ export class CameraOperator implements IInputReceiver, IUpdatable
 		else if (code === 'KeyT' && pressed === true && this.characterCaller !== undefined)
 		{
 			const t = this.target;
-			const controlled = this.characterCaller.controlledObject as { collision?: CANNON.Body } | undefined;
+			const controlled = this.characterCaller.controlledObject as { collision?: PhysicsBody } | undefined;
 			if (controlled?.collision)
 			{
 				const body = controlled.collision;
-				body.position.set(t.x, t.y, t.z);
-				body.interpolatedPosition.set(t.x, t.y, t.z);
-				body.velocity.setZero();
-				body.angularVelocity.setZero();
+				PhysicsWorld.teleport(body, t);
+				PhysicsWorld.zeroVelocity(body);
 			}
 			else
 			{
-				const body = this.characterCaller.characterCapsule.body;
-				body.position.set(t.x, t.y, t.z);
-				body.velocity.set(0, 0, 0);
+				const capsule = this.characterCaller.characterCapsule;
+				capsule.node.position.copyFrom(t);
+				PhysicsWorld.zeroVelocity(capsule.body);
 			}
 		}
 		else
@@ -219,7 +243,7 @@ export class CameraOperator implements IInputReceiver, IUpdatable
 			for (const action in this.actions) {
 				if (this.actions.hasOwnProperty(action)) {
 					const binding = this.actions[action];
-	
+
 					if (_.includes(binding.eventCodes, code))
 					{
 						binding.isPressed = pressed;
@@ -255,7 +279,7 @@ export class CameraOperator implements IInputReceiver, IUpdatable
 
 	public inputReceiverInit(): void
 	{
-		this.target.copy(this.camera.position);
+		this.target.copyFrom(this.camera.position);
 		this.setRadius(0, true);
 
 		this.world.updateControls([
@@ -271,16 +295,16 @@ export class CameraOperator implements IInputReceiver, IUpdatable
 		// Set fly speed
 		let speed = this.movementSpeed * (this.actions.fast.isPressed ? timeStep * 600 : timeStep * 60);
 
-		const up = Utils.getUp(this.camera);
-		const right = Utils.getRight(this.camera);
-		const forward = Utils.getBack(this.camera);
+		this.camera.getDirectionToRef(_LOCAL_UP, _up);
+		this.camera.getDirectionToRef(_LOCAL_RIGHT, _right);
+		this.camera.getDirectionToRef(_LOCAL_FORWARD, _forward);
 
-		this.upVelocity = THREE.MathUtils.lerp(this.upVelocity, +this.actions.up.isPressed - +this.actions.down.isPressed, 0.3);
-		this.forwardVelocity = THREE.MathUtils.lerp(this.forwardVelocity, +this.actions.forward.isPressed - +this.actions.back.isPressed, 0.3);
-		this.rightVelocity = THREE.MathUtils.lerp(this.rightVelocity, +this.actions.right.isPressed - +this.actions.left.isPressed, 0.3);
+		this.upVelocity = Utils.lerp(this.upVelocity, +this.actions.up.isPressed - +this.actions.down.isPressed, 0.3);
+		this.forwardVelocity = Utils.lerp(this.forwardVelocity, +this.actions.forward.isPressed - +this.actions.back.isPressed, 0.3);
+		this.rightVelocity = Utils.lerp(this.rightVelocity, +this.actions.right.isPressed - +this.actions.left.isPressed, 0.3);
 
-		this.target.add(up.multiplyScalar(speed * this.upVelocity));
-		this.target.add(forward.multiplyScalar(speed * this.forwardVelocity));
-		this.target.add(right.multiplyScalar(speed * this.rightVelocity));
+		this.target.addInPlace(_up.scaleInPlace(speed * this.upVelocity));
+		this.target.addInPlace(_forward.scaleInPlace(speed * this.forwardVelocity));
+		this.target.addInPlace(_right.scaleInPlace(speed * this.rightVelocity));
 	}
 }

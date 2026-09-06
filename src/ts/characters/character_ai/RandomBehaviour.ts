@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Vector3 } from '@babylonjs/core';
 import { ICharacterAI } from '../../interfaces/ICharacterAI';
 import { Character } from '../Character';
 
@@ -19,7 +19,7 @@ export class RandomBehaviour implements ICharacterAI
 
 		if (rndInt === 0)
 		{
-			this.character.setViewVector(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5));
+			this.character.setViewVector(new Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5));
 
 			this.character.triggerAction('up', true);
 			this.character.charState.update(timeStep);

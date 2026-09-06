@@ -1,4 +1,5 @@
-import * as THREE from 'three';
+import { Quaternion, TransformNode, Vector3 } from '@babylonjs/core';
+
 import
 {
 	CharacterStateBase,
@@ -11,9 +12,10 @@ import { Side } from '../../../enums/Side';
 import { Sitting } from './Sitting';
 import { SeatType } from '../../../enums/SeatType';
 import { EntityType } from '../../../enums/EntityType';
-import { Object3D } from 'three';
 import * as Utils from '../../../core/FunctionLibrary';
 import { SpringSimulator } from '../../../physics/spring_simulation/SpringSimulator';
+
+const _zero = new Vector3();
 
 export class EnteringVehicle extends CharacterStateBase
 {
@@ -21,15 +23,15 @@ export class EnteringVehicle extends CharacterStateBase
 	private animData: any;
 	private seat: VehicleSeat;
 
-	private initialPositionOffset: THREE.Vector3 = new THREE.Vector3();
-	private startPosition: THREE.Vector3 = new THREE.Vector3();
-	private endPosition: THREE.Vector3 = new THREE.Vector3();
-	private startRotation: THREE.Quaternion = new THREE.Quaternion();
-	private endRotation: THREE.Quaternion = new THREE.Quaternion();
+	private initialPositionOffset: Vector3 = new Vector3();
+	private startPosition: Vector3 = new Vector3();
+	private endPosition: Vector3 = new Vector3();
+	private startRotation: Quaternion = new Quaternion();
+	private endRotation: Quaternion = new Quaternion();
 
 	private factorSimulator: SpringSimulator;
 
-	constructor(character: Character, seat: VehicleSeat, entryPoint: Object3D)
+	constructor(character: Character, seat: VehicleSeat, entryPoint: TransformNode)
 	{
 		super(character);
 
@@ -50,16 +52,16 @@ export class EnteringVehicle extends CharacterStateBase
 		this.character.resetVelocity();
 		this.character.tiltContainer.rotation.z = 0;
 		this.character.setPhysicsEnabled(false);
-		(this.seat.vehicle as unknown as THREE.Object3D).attach(this.character);
+		this.character.setParent(this.seat.vehicle as unknown as TransformNode);
 
-		this.startPosition.copy(entryPoint.position);
+		this.startPosition.copyFrom(entryPoint.position);
 		this.startPosition.y += 0.53;
-		this.endPosition.copy(seat.seatPointObject.position);
+		this.endPosition.copyFrom(seat.seatPointObject.position);
 		this.endPosition.y += 0.6;
-		this.initialPositionOffset.copy(this.startPosition).sub(this.character.position);
+		this.initialPositionOffset.copyFrom(this.startPosition).subtractInPlace(this.character.position);
 
-		this.startRotation.copy(this.character.quaternion);
-		this.endRotation.copy(this.seat.seatPointObject.quaternion);
+		this.startRotation.copyFrom(Utils.getQuaternion(this.character));
+		this.endRotation.copyFrom(Utils.getQuaternion(this.seat.seatPointObject));
 
 		this.factorSimulator = new SpringSimulator(60, 10, 0.5);
 		this.factorSimulator.target = 1;
@@ -96,15 +98,15 @@ export class EnteringVehicle extends CharacterStateBase
 				this.seat.door.rotation = 1;
 			}
 
-			let factor = THREE.MathUtils.clamp(this.timer / (this.animationLength - this.animData.end_early), 0, 1);
+			let factor = Utils.clamp(this.timer / (this.animationLength - this.animData.end_early), 0, 1);
 			let sineFactor = Utils.easeInOutSine(factor);
 			this.factorSimulator.simulate(timeStep);
-			
-			let currentPosOffset = new THREE.Vector3().lerpVectors(this.initialPositionOffset, new THREE.Vector3(), this.factorSimulator.position);
-			let lerpPosition = new THREE.Vector3().lerpVectors(this.startPosition.clone().sub(currentPosOffset), this.endPosition, sineFactor);
+
+			let currentPosOffset = Vector3.Lerp(this.initialPositionOffset, _zero, this.factorSimulator.position);
+			let lerpPosition = Vector3.Lerp(this.startPosition.subtract(currentPosOffset), this.endPosition, sineFactor);
 			this.character.setPosition(lerpPosition.x, lerpPosition.y, lerpPosition.z);
 
-			this.character.quaternion.slerpQuaternions(this.startRotation, this.endRotation, this.factorSimulator.position);
+			Quaternion.SlerpToRef(this.startRotation, this.endRotation, this.factorSimulator.position, Utils.getQuaternion(this.character));
 		}
 	}
 

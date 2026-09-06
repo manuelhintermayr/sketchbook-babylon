@@ -1,26 +1,29 @@
-import * as THREE from 'three';
+import { TransformNode, Vector3 } from '@babylonjs/core';
+
 import { ICharacterAI } from '../../interfaces/ICharacterAI';
 import * as Utils from '../../core/FunctionLibrary';
 import { Vehicle } from '../../vehicles/Vehicle';
 import { Character } from '../Character';
-import { Car } from '../../vehicles/Car';
 import { EntityType } from '../../enums/EntityType';
+import { PhysicsWorld } from '../../physics/PhysicsWorld';
+
+const _chassisVelocity = new Vector3();
 
 export class FollowTarget implements ICharacterAI
 {
 	public character: Character;
 	public isTargetReached: boolean;
 
-	public target: THREE.Object3D;
+	public target: TransformNode;
 	private stopDistance: number;
 
-	constructor(target: THREE.Object3D, stopDistance: number = 1.3)
+	constructor(target: TransformNode, stopDistance: number = 1.3)
 	{
 		this.target = target;
 		this.stopDistance = stopDistance;
 	}
 
-	public setTarget(target: THREE.Object3D): void
+	public setTarget(target: TransformNode): void
 	{
 		this.target = target;
 	}
@@ -29,13 +32,13 @@ export class FollowTarget implements ICharacterAI
 	{
 		if (this.character.controlledObject !== undefined)
 		{
-			let source = new THREE.Vector3();
-			let target = new THREE.Vector3();
+			let source = new Vector3();
+			let target = new Vector3();
 
-			this.character.getWorldPosition(source);
-			this.target.getWorldPosition(target);
+			Utils.getWorldPosition(this.character, source);
+			Utils.getWorldPosition(this.target, target);
 
-			let viewVector = new THREE.Vector3().subVectors(target, source);
+			let viewVector = target.subtract(source);
 
 			// Follow character
 			if (viewVector.length() > this.stopDistance)
@@ -47,15 +50,17 @@ export class FollowTarget implements ICharacterAI
 				this.isTargetReached = true;
 			}
 
-			let forward = new THREE.Vector3(0, 0, 1).applyQuaternion((this.character.controlledObject as unknown as THREE.Object3D).quaternion);
+			const vehicle = this.character.controlledObject as unknown as Vehicle;
+			let forward = new Vector3(0, 0, 1).applyRotationQuaternionInPlace(Utils.getQuaternion(vehicle));
 			viewVector.y = 0;
 			viewVector.normalize();
 			let angle = Utils.getSignedAngleBetweenVectors(forward, viewVector);
 
-			let goingForward = forward.dot(Utils.threeVector((this.character.controlledObject as unknown as Vehicle).collision.velocity)) > 0;
-			let speed = (this.character.controlledObject as unknown as Vehicle).collision.velocity.length();
+			vehicle.collision.getLinearVelocityToRef(_chassisVelocity);
+			let goingForward = Vector3.Dot(forward, _chassisVelocity) > 0;
+			let speed = _chassisVelocity.length();
 
-			if (forward.dot(viewVector) < 0.0)
+			if (Vector3.Dot(forward, viewVector) < 0.0)
 			{
 				if (this.character.controlledObject.entityType === EntityType.Boat)
 				{
@@ -78,7 +83,7 @@ export class FollowTarget implements ICharacterAI
 
 			if (Math.abs(angle) > 0.15)
 			{
-				if (forward.dot(viewVector) > 0 || goingForward)
+				if (Vector3.Dot(forward, viewVector) > 0 || goingForward)
 				{
 					if (angle > 0)
 					{
@@ -110,10 +115,12 @@ export class FollowTarget implements ICharacterAI
 				this.character.controlledObject.triggerAction('left', false);
 				this.character.controlledObject.triggerAction('right', false);
 			}
+
+			void speed;
 		}
 		else
 		{
-			let viewVector = new THREE.Vector3().subVectors(this.target.position, this.character.position);
+			let viewVector = this.target.position.subtract(this.character.position);
 			this.character.setViewVector(viewVector);
 
 			// Follow character
@@ -127,7 +134,7 @@ export class FollowTarget implements ICharacterAI
 			{
 				this.isTargetReached = true;
 				this.character.triggerAction('up', false);
-	
+
 				// Look at character
 				this.character.setOrientation(viewVector);
 			}

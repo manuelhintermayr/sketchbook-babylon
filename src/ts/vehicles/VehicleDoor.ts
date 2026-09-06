@@ -1,19 +1,21 @@
-import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
+import { Quaternion, TransformNode, Vector3 } from '@babylonjs/core';
+
 import { Vehicle } from './Vehicle';
 import * as Utils from '../core/FunctionLibrary';
 import { VehicleSeat } from './VehicleSeat';
 import { Side } from '../enums/Side';
 
+const _chassisVelocity = new Vector3();
+
 export class VehicleDoor
 {
 	public vehicle: Vehicle;
 	public seat: VehicleSeat;
-	public doorObject: THREE.Object3D;
+	public doorObject: TransformNode;
 	public doorVelocity: number = 0;
-	public doorWorldPos: THREE.Vector3 = new THREE.Vector3();
-	public lastTrailerPos: THREE.Vector3 = new THREE.Vector3();
-	public lastTrailerVel: THREE.Vector3 = new THREE.Vector3();
+	public doorWorldPos: Vector3 = new Vector3();
+	public lastTrailerPos: Vector3 = new Vector3();
+	public lastTrailerVel: Vector3 = new Vector3();
 
 	public rotation: number = 0;
 	public achievingTargetRotation: boolean = false;
@@ -21,12 +23,12 @@ export class VehicleDoor
 	public targetRotation: number = 0;
 	public rotationSpeed: number = 5;
 
-	public lastVehicleVel: THREE.Vector3 = new THREE.Vector3();
-	public lastVehiclePos: THREE.Vector3 = new THREE.Vector3();
+	public lastVehicleVel: Vector3 = new Vector3();
+	public lastVehiclePos: Vector3 = new Vector3();
 
 	private sideMultiplier: number;
 
-	constructor(seat: VehicleSeat, object: THREE.Object3D)
+	constructor(seat: VehicleSeat, object: TransformNode)
 	{
 		this.seat = seat;
 		this.vehicle = seat.vehicle as unknown as Vehicle;
@@ -45,7 +47,7 @@ export class VehicleDoor
 			if (this.rotation < this.targetRotation)
 			{
 				this.rotation += timestep * this.rotationSpeed;
-	
+
 				if (this.rotation > this.targetRotation)
 				{
 					this.rotation = this.targetRotation;
@@ -56,7 +58,7 @@ export class VehicleDoor
 			else if (this.rotation > this.targetRotation)
 			{
 				this.rotation -= timestep * this.rotationSpeed;
-	
+
 				if (this.rotation < this.targetRotation)
 				{
 					this.rotation = this.targetRotation;
@@ -66,7 +68,9 @@ export class VehicleDoor
 			}
 		}
 
-		this.doorObject.setRotationFromEuler(new THREE.Euler(0, this.sideMultiplier * this.rotation, 0));
+		// Pure yaw around the hinge - replaces the whole rotation, like
+		// setRotationFromEuler(0, y, 0) did.
+		Quaternion.RotationYawPitchRollToRef(this.sideMultiplier * this.rotation, 0, 0, Utils.getQuaternion(this.doorObject));
 	}
 
 	public preStepCallback(): void
@@ -74,30 +78,29 @@ export class VehicleDoor
 		if (this.physicsEnabled && !this.achievingTargetRotation)
 		{
 			// Door world position
-			this.doorObject.getWorldPosition(this.doorWorldPos);
+			Utils.getWorldPosition(this.doorObject, this.doorWorldPos);
 
 			// Get acceleration
-			let v = this.vehicle.rayCastVehicle.chassisBody.velocity;
-			let vehicleVel = new THREE.Vector3(v.x, v.y, v.z);
-			let vehicleVelDiff = vehicleVel.clone().sub(this.lastVehicleVel);
+			this.vehicle.collision.getLinearVelocityToRef(_chassisVelocity);
+			let vehicleVel = _chassisVelocity.clone();
+			let vehicleVelDiff = vehicleVel.subtract(this.lastVehicleVel);
 
 			// Get vectors
-			let q = this.vehicle.rayCastVehicle.chassisBody.quaternion
-			const quat = new THREE.Quaternion(q.x, q.y, q.z, q.w);
-			const back = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
-			const up = new THREE.Vector3(0, 1, 0).applyQuaternion(quat);
+			const quat = Utils.getQuaternion(this.vehicle);
+			const back = new Vector3(0, 0, -1).applyRotationQuaternionInPlace(quat);
+			const up = new Vector3(0, 1, 0).applyRotationQuaternionInPlace(quat);
 
 			// Get imaginary positions
-			let trailerPos = back.clone().applyAxisAngle(up, this.sideMultiplier * this.rotation).add(this.doorWorldPos);
-			let trailerPushedPos = trailerPos.clone().sub(vehicleVelDiff);
+			let trailerPos = Utils.applyAxisAngle(back.clone(), up, this.sideMultiplier * this.rotation).addInPlace(this.doorWorldPos);
+			let trailerPushedPos = trailerPos.subtract(vehicleVelDiff);
 
 			// Update last values
-			this.lastVehicleVel.copy(vehicleVel);
-			this.lastTrailerPos.copy(trailerPos);
+			this.lastVehicleVel.copyFrom(vehicleVel);
+			this.lastTrailerPos.copyFrom(trailerPos);
 
 			// Measure angle difference
-			let v1 = trailerPos.clone().sub(this.doorWorldPos).normalize();
-			let v2 = trailerPushedPos.clone().sub(this.doorWorldPos).normalize();
+			let v1 = trailerPos.subtract(this.doorWorldPos).normalize();
+			let v2 = trailerPushedPos.subtract(this.doorWorldPos).normalize();
 			let angle = Utils.getSignedAngleBetweenVectors(v1, v2, up);
 
 			// Apply door velocity
@@ -145,15 +148,14 @@ export class VehicleDoor
 	public resetPhysTrailer(): void
 	{
 		// Door world position
-		this.doorObject.getWorldPosition(this.doorWorldPos);
+		Utils.getWorldPosition(this.doorObject, this.doorWorldPos);
 
 		// Get acceleration
-		this.lastVehicleVel = new THREE.Vector3();
+		this.lastVehicleVel = new Vector3();
 
 		// Get vectors
-		let q = this.vehicle.rayCastVehicle.chassisBody.quaternion;
-		const quat = new THREE.Quaternion(q.x, q.y, q.z, q.w);
-		const back = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
-		this.lastTrailerPos.copy(back.add(this.doorWorldPos));
+		const quat = Utils.getQuaternion(this.vehicle);
+		const back = new Vector3(0, 0, -1).applyRotationQuaternionInPlace(quat);
+		this.lastTrailerPos.copyFrom(back.addInPlace(this.doorWorldPos));
 	}
 }

@@ -1,4 +1,5 @@
-import * as THREE from 'three';
+import { Quaternion, TransformNode, Vector3 } from '@babylonjs/core';
+
 import { ISpawnPoint } from '../../interfaces/ISpawnPoint';
 import { World } from '../World';
 import { Helicopter } from '../../vehicles/Helicopter';
@@ -10,8 +11,8 @@ import * as Utils from '../../core/FunctionLibrary';
 import { Vehicle } from '../../vehicles/Vehicle';
 import { Character } from '../../characters/Character';
 import { FollowPath } from '../../characters/character_ai/FollowPath';
-import { LoadingManager } from '../../core/LoadingManager';
-import { IWorldEntity } from '../../interfaces/IWorldEntity';
+import { LoadingManager, LoadedModel } from '../../core/LoadingManager';
+import { PhysicsWorld } from '../../physics/PhysicsWorld';
 
 export class VehicleSpawnPoint implements ISpawnPoint
 {
@@ -19,28 +20,28 @@ export class VehicleSpawnPoint implements ISpawnPoint
 	public driver: string;
 	public firstAINode: string;
 
-	private object: THREE.Object3D;
+	private object: TransformNode;
 
-	constructor(object: THREE.Object3D)
+	constructor(object: TransformNode)
 	{
 		this.object = object;
 	}
 
 	public spawn(loadingManager: LoadingManager, world: World): void
 	{
-		loadingManager.loadGLTF('build/assets/' + this.type + '.glb', (model: any) =>
+		loadingManager.loadGLTF('build/assets/' + this.type + '.glb', (model: LoadedModel) =>
 		{
 			let vehicle: Vehicle = this.getNewVehicleByType(model, this.type);
 			vehicle.spawnPoint = this.object;
 
-			let worldPos = new THREE.Vector3();
-			let worldQuat = new THREE.Quaternion();
-			this.object.getWorldPosition(worldPos);
-			this.object.getWorldQuaternion(worldQuat);
+			let worldPos = new Vector3();
+			let worldQuat = new Quaternion();
+			Utils.getWorldPosition(this.object, worldPos);
+			Utils.getWorldQuaternion(this.object, worldQuat);
 
 			vehicle.setPosition(worldPos.x, worldPos.y + 1, worldPos.z);
-			vehicle.collision.quaternion.set(worldQuat.x, worldQuat.y, worldQuat.z, worldQuat.w);
-			
+			PhysicsWorld.setNodeRotation(vehicle, worldQuat);
+
 			world.add(vehicle);
 
 			if (this.driver !== undefined)
@@ -63,11 +64,11 @@ export class VehicleSpawnPoint implements ISpawnPoint
 							for (const pathName in world.paths) {
 								if (world.paths.hasOwnProperty(pathName)) {
 									const path = world.paths[pathName];
-									
+
 									for (const nodeName in path.nodes) {
 										if (Object.prototype.hasOwnProperty.call(path.nodes, nodeName)) {
 											const node = path.nodes[nodeName];
-											
+
 											if (node.object.name === this.firstAINode)
 											{
 												character.setBehaviour(new FollowPath(node, 10));
@@ -89,7 +90,7 @@ export class VehicleSpawnPoint implements ISpawnPoint
 		});
 	}
 
-	private getNewVehicleByType(model: any, type: string): Vehicle
+	private getNewVehicleByType(model: LoadedModel, type: string): Vehicle
 	{
 		switch (type)
 		{

@@ -1,131 +1,159 @@
-import * as THREE from 'three';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
-import { FXAAShader } from 'three/examples/jsm/shaders/FXAAShader.js';
-import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import {
+	Color4,
+	Engine,
+	FreeCamera,
+	FxaaPostProcess,
+	ImageProcessingConfiguration,
+	PhysicsBody,
+	PhysicsViewer,
+	Quaternion,
+	Scene,
+	Vector3,
+} from '@babylonjs/core';
 
 import { World } from '../World';
-import { RenderLayer } from '../../enums/RenderLayers';
+import { LabelRenderer } from '../ui/LabelRenderer';
 
-// Build the rendering pipeline - WebGL renderer, CSS2D label overlay,
-// scene + camera, composer with FXAA, plus the window-resize handler
-// that keeps every surface in sync.
+// Build the rendering pipeline - Babylon engine + scene, the DOM label
+// overlay, the camera, the FXAA post-process, plus the window-resize
+// handler that keeps every surface in sync.
 //
 // Side effects assigned to world by the time this returns:
-//   - world.renderer, world.labelRenderer
-//   - world.graphicsWorld, world.camera
-//   - world.composer
+//   - world.engine, world.canvas, world.scene, world.camera
+//   - world.labelRenderer
+//   - world.fxaaPass
 //
-// Run before bootstrapHTML - that function appends
-// world.renderer.domElement to <body> as the canvas, so the renderer
-// has to exist first.
+// Run before bootstrapHTML - that function appends world.canvas to
+// <body>, so the engine has to exist first.
 export function setupRendererPipeline(world: World): void
 {
-	// Renderer. Cap pixelRatio at 2 - phones/tablets often report
-	// DPR 3-4, which forces the GPU to render 9-16× the pixels for
-	// barely visible sharpness gain past 2×. Desktops (DPR 1-2) are
-	// unaffected.
-	world.renderer = new THREE.WebGLRenderer();
-	world.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-	world.renderer.setSize(window.innerWidth, window.innerHeight);
-	world.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-	world.renderer.toneMappingExposure = 1.0;
+	// Canvas + engine. Cap the effective pixel ratio at 2 - phones and
+	// tablets often report DPR 3-4, which forces the GPU to render 9-16x
+	// the pixels for barely visible sharpness gain past 2x. Babylon
+	// expresses this as a hardware scaling level (1 / ratio).
+	world.canvas = document.createElement('canvas');
+	world.engine = new Engine(world.canvas, true, { stencil: false, preserveDrawingBuffer: false }, false);
+	world.engine.setHardwareScalingLevel(1 / Math.min(window.devicePixelRatio, 2));
+
+	// Right-handed scene so glTF content, the physics maths and every
+	// hand-tuned coordinate in the maps carry over from three.js
+	// unchanged (Y up, -Z forward for cameras).
+	world.scene = new Scene(world.engine);
+	world.scene.useRightHandedSystem = true;
 	// Black space behind the Sky shell; Sky.update() hides the shell
 	// once the camera leaves Earth's atmosphere, revealing this color.
-	world.renderer.setClearColor(0x000000, 1);
-	world.renderer.shadowMap.enabled = true;
-	world.renderer.shadowMap.type = THREE.PCFShadowMap;
-	//world.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-	// Note: Soft shadows leads to animation errors with car tires
+	world.scene.clearColor = new Color4(0, 0, 0, 1);
+	world.scene.imageProcessingConfiguration.toneMappingEnabled = true;
+	world.scene.imageProcessingConfiguration.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
+	world.scene.imageProcessingConfiguration.exposure = 1.0;
 
-	// CSS2D label overlay - drives the name tags above each character.
-	// Pattern is the one socketControl uses (a parallel renderer that
-	// projects HTML divs to screen-space at the object's world
-	// position). pointerEvents=none so labels never eat clicks.
-	world.labelRenderer = new CSS2DRenderer();
+	// Camera. far=1010 (swift502 default) clips the moon at distance
+	// ~12320 and the rocketship's max-Y plane at 5200. Inthenew sets
+	// far=2e10; 50000 is plenty for the authored geometry while still
+	// keeping the depth buffer well-conditioned. No built-in inputs -
+	// CameraOperator drives position + target itself.
+	world.camera = new FreeCamera('camera', new Vector3(0, 2, 5), world.scene);
+	world.camera.fov = 80 * Math.PI / 180;
+	world.camera.minZ = 0.1;
+	world.camera.maxZ = 50000;
+	world.camera.rotationQuaternion = Quaternion.Identity();
+	world.camera.inputs.clear();
+	world.scene.activeCamera = world.camera;
+
+	// DOM label overlay - drives the name tags above each character.
+	// Same pattern socketControl used (a parallel renderer that projects
+	// HTML divs to screen-space at the object's world position).
+	// pointerEvents=none so labels never eat clicks.
+	world.labelRenderer = new LabelRenderer(world.scene);
 	world.labelRenderer.setSize(window.innerWidth, window.innerHeight);
 	world.labelRenderer.domElement.id = 'labelRenderer';
 	world.labelRenderer.domElement.style.position = 'absolute';
 	world.labelRenderer.domElement.style.top = '0';
+	world.labelRenderer.domElement.style.left = '0';
 	world.labelRenderer.domElement.style.pointerEvents = 'none';
 	document.body.appendChild(world.labelRenderer.domElement);
 
-	// Three.js scene
-	world.graphicsWorld = new THREE.Scene();
-	// far=1010 (swift502 default) clips the moon at distance ~12320 and
-	// the rocketship's max-Y plane at 5200. Inthenew sets far=2e10;
-	// 50000 is plenty for the authored geometry while still keeping
-	// the depth buffer well-conditioned.
-	world.camera = new THREE.PerspectiveCamera(80, window.innerWidth / window.innerHeight, 0.1, 50000);
-	// Main camera sees both the default layer and the outline-skip
-	// layer so background meshes (sky, stars, grass, ocean) still
-	// render normally. OutlineEffect.renderPass strips this bit
-	// briefly to skip them during the depth pre-pass.
-	world.camera.layers.enable(RenderLayer.OutlineSkip);
+	// FXAA - the only post-process left after Bloom + DoF were dropped
+	// (they cost frames on integrated GPUs without giving the toon-ish
+	// look much). Attached to the camera right away; tickRenderPipeline
+	// detaches it while params.FXAA is off.
+	world.fxaaPass = new FxaaPostProcess('fxaa', 1.0, world.camera);
+	world.fxaaAttached = true;
 
-	// Passes
-	const renderPass = new RenderPass(world.graphicsWorld, world.camera);
-	const fxaaPass = new ShaderPass(FXAAShader);
-
-	// FXAA
-	const pixelRatio = world.renderer.getPixelRatio();
-	fxaaPass.material['uniforms'].resolution.value.x = 1 / (window.innerWidth * pixelRatio);
-	fxaaPass.material['uniforms'].resolution.value.y = 1 / (window.innerHeight * pixelRatio);
-
-	// Composer - FXAA only. Bloom + DoF were dropped because they cost
-	// frames on integrated GPUs without giving the toon-ish look much.
-	world.composer = new EffectComposer(world.renderer);
-	world.composer.addPass(renderPass);
-	world.composer.addPass(fxaaPass);
-
-	// Auto window resize. Captures fxaaPass and pixelRatio so the
-	// FXAA shader's resolution uniform stays in sync with the new
-	// surface size; everything else just resizes against window.inner*.
+	// Auto window resize. The engine re-reads the canvas size; the label
+	// overlay follows window.inner* like the canvas CSS does.
 	window.addEventListener('resize', () =>
 	{
-		world.camera.aspect = window.innerWidth / window.innerHeight;
-		world.camera.updateProjectionMatrix();
-		world.renderer.setSize(window.innerWidth, window.innerHeight);
-		fxaaPass.uniforms['resolution'].value.set(
-			1 / (window.innerWidth * pixelRatio),
-			1 / (window.innerHeight * pixelRatio),
-		);
-		world.composer.setSize(window.innerWidth * pixelRatio, window.innerHeight * pixelRatio);
+		world.engine.resize();
 		world.labelRenderer.setSize(window.innerWidth, window.innerHeight);
 	}, false);
 }
 
-// Per-frame GPU dispatch: composer or direct render (FXAA branch),
-// outline overlay, CSS2D label projection, and the cannon debug pass.
-// World.render() drives the loop (RAF + timestep + updatables); this
-// helper just writes pixels. Splitting the two keeps the render-loop
-// orchestration in World and the actual draw calls + their gating
-// flags here, where they sit next to the pipeline they were built by.
+// Per-frame GPU dispatch: FXAA gating, outline pre-pass toggling, the
+// scene render itself, and the label projection. World.render() drives
+// the loop (timestep + updatables); this helper just writes pixels.
 export function tickRenderPipeline(world: World): void
 {
-	// FXAA composer when antialiasing is on, raw renderer when off.
-	// The composer wraps a RenderPass + FXAA ShaderPass; bypassing it
-	// saves the shader pass cost when the player toggles FXAA off.
-	if (world.params.FXAA) world.composer.render();
-	else world.renderer.render(world.graphicsWorld, world.camera);
+	// FXAA attach/detach when the toggle flips. Detaching skips the
+	// fullscreen pass entirely instead of running it with a no-op.
+	const wantFxaa = !!world.params.FXAA;
+	if (wantFxaa !== world.fxaaAttached)
+	{
+		if (wantFxaa) world.camera.attachPostProcess(world.fxaaPass, 0);
+		else world.camera.detachPostProcess(world.fxaaPass);
+		world.fxaaAttached = wantFxaa;
+	}
 
 	// Depth-Sobel outline overlay - internally guarded by params.Outlines
 	// so a disabled toggle costs one branch per frame.
-	world.outlineEffect.renderPass();
+	world.outlineEffect.beforeRender();
 
-	// CSS2D pass projects each name-label div above its anchor world
+	world.scene.render();
+
+	// Label pass projects each name-label div above its anchor world
 	// position. Cheap; no perf concerns at the scale of "a few NPCs
 	// and a player".
-	world.labelRenderer.render(world.graphicsWorld, world.camera);
+	world.labelRenderer.render(world.camera);
 }
 
-// Cannon physics debug pass. Drawn after the visual pipeline so its
-// wireframes overlay the rendered scene rather than being hidden by
-// it. Gated on params.Debug_Physics by the caller (World.update);
-// the cannon-es-debugger handles its own no-op when disabled, but
-// the if-check keeps the cost zero when the player has the toggle off.
-export function tickCannonDebug(world: World): void
+// Physics debug pass. Babylon's PhysicsViewer draws a wireframe per
+// body; bodies that spawn while the toggle is on are picked up here on
+// their first frame, disposed ones are dropped. Gated on
+// params.Debug_Physics by the caller (World.update).
+export function tickPhysicsDebug(world: World): void
 {
-	world.cannonDebugRenderer?.update();
+	if (world.physicsViewer === undefined) return;
+
+	const shown = world.physicsDebugBodies;
+	for (const body of world.physicsWorld.engine.getBodies())
+	{
+		if (!shown.has(body))
+		{
+			shown.add(body);
+			world.physicsViewer.showBody(body);
+		}
+	}
+	for (const body of shown)
+	{
+		if (body.isDisposed)
+		{
+			shown.delete(body);
+			world.physicsViewer.hideBody(body);
+		}
+	}
+}
+
+export function setPhysicsDebugEnabled(world: World, enabled: boolean): void
+{
+	if (enabled && world.physicsViewer === undefined)
+	{
+		world.physicsViewer = new PhysicsViewer(world.scene);
+		world.physicsDebugBodies = new Set<PhysicsBody>();
+	}
+	else if (!enabled && world.physicsViewer !== undefined)
+	{
+		world.physicsViewer.dispose();
+		world.physicsViewer = undefined;
+		world.physicsDebugBodies = new Set<PhysicsBody>();
+	}
 }

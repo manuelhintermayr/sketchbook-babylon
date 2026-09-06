@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+
 import * as Utils from '../../core/FunctionLibrary';
 import {
 	DropIdle,
@@ -91,19 +91,12 @@ export abstract class CharacterStateBase implements ICharacterState
 
 	public animationEnded(timeStep: number): boolean
 	{
-		if (this.character.mixer !== undefined)
+		if (this.animationLength === undefined)
 		{
-			if (this.animationLength === undefined)
-			{
-				console.error(this.constructor.name + 'Error: Set this.animationLength in state constructor!');
-				return false;
-			}
-			else
-			{
-				return this.timer > this.animationLength - timeStep;
-			}
+			console.error(this.constructor.name + 'Error: Set this.animationLength in state constructor!');
+			return false;
 		}
-		else { return true; }
+		return this.timer > this.animationLength - timeStep;
 	}
 
 	public setAppropriateDropState(): void

@@ -4,7 +4,7 @@
 // one DOM bar and renders the current node; it's opened by NPCs from
 // their ProximityPrompt onInteract callback.
 
-import * as THREE from 'three';
+import { Vector3 } from '@babylonjs/core';
 import { t } from '../../i18n';
 import { Character } from '../../characters/Character';
 
@@ -157,7 +157,7 @@ export class DialogBox
 				const dx = player.position.x - npc.position.x;
 				const dz = player.position.z - npc.position.z;
 				if (dx === 0 && dz === 0) continue;
-				npc.setOrientation(new THREE.Vector3(dx, 0, dz));
+				npc.setOrientation(new Vector3(dx, 0, dz));
 			}
 		}
 		this.bar.classList.add('visible');

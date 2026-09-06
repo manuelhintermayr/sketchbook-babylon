@@ -1,22 +1,22 @@
-import * as THREE from 'three';
+import { Vector3 } from '@babylonjs/core';
 
 export class ClosestObjectFinder<T>
 {
 	public closestObject: T;
 
 	private closestDistance: number = Number.POSITIVE_INFINITY;
-	private referencePosition: THREE.Vector3;
+	private referencePosition: Vector3;
 	private maxDistance: number = Number.POSITIVE_INFINITY;
 
-	constructor(referencePosition: THREE.Vector3, maxDistance?: number)
+	constructor(referencePosition: Vector3, maxDistance?: number)
 	{
 		this.referencePosition = referencePosition;
 		if (maxDistance !== undefined) this.maxDistance = maxDistance;
 	}
 
-	public consider(object: T, objectPosition: THREE.Vector3): void
+	public consider(object: T, objectPosition: Vector3): void
 	{
-		let distance = this.referencePosition.distanceTo(objectPosition);
+		let distance = Vector3.Distance(this.referencePosition, objectPosition);
 
 		if (distance < this.maxDistance && distance < this.closestDistance)
 		{

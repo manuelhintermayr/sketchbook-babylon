@@ -5,6 +5,7 @@ import
 } from './_stateLibrary';
 import { ICharacterState } from '../../interfaces/ICharacterState';
 import { Character } from '../Character';
+import { PhysicsWorld } from '../../physics/PhysicsWorld';
 
 export class JumpIdle extends CharacterStateBase implements ICharacterState
 {
@@ -42,7 +43,7 @@ export class JumpIdle extends CharacterStateBase implements ICharacterState
 			this.character.velocitySimulator.mass = 100;
 			this.character.rotationSimulator.damping = 0.3;
 
-			if (this.character.rayResult.body.velocity.length() > 0)
+			if (PhysicsWorld.linearSpeed(this.character.rayResult.body) > 0)
 			{
 				this.character.setArcadeVelocityInfluence(0, 0, 0);
 			}

@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Vector3 } from '@babylonjs/core';
 import { World } from './World';
 import { IUpdatable } from '../interfaces/IUpdatable';
 import { UpdateOrder } from '../enums/UpdateOrder';
@@ -6,7 +6,7 @@ import { Character } from '../characters/Character';
 import { DialogBox, Dialog } from './ui/DialogBox';
 import { t } from '../i18n';
 
-export type ProximityCenter = THREE.Vector3 | (() => THREE.Vector3);
+export type ProximityCenter = Vector3 | (() => Vector3);
 
 export interface ProximityPromptParams
 {
@@ -38,7 +38,7 @@ export interface ProximityPromptParams
 // to the desync windows a TriggerCube + onEnter/onExit state machine
 // can hit when the player teleports, gets dialogFreeze'd mid-step, or
 // the NPC walks past at speed.
-const _temp = new THREE.Vector3();
+const _temp = new Vector3();
 
 export class ProximityPrompt implements IUpdatable
 {

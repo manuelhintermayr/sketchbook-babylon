@@ -1,25 +1,27 @@
-import * as THREE from 'three';
+import { Mesh, MeshBuilder, StandardMaterial, Texture } from '@babylonjs/core';
+import { PBRCustomMaterial } from '@babylonjs/materials';
 
 import { World } from './World';
 import { IUpdatable } from '../interfaces/IUpdatable';
 import { UpdateOrder } from '../enums/UpdateOrder';
-import { RenderLayer } from '../enums/RenderLayers';
+import { markOutlineSkip } from '../enums/RenderLayers';
 
 const DEG2RAD = Math.PI / 180;
 
-// Wave-based ocean ported from Inthenew/Sketchbook (MIT). The shader is
-// applied via MeshStandardMaterial.onBeforeCompile so three's lighting
-// and normal-map pipeline are preserved. A 2x2 grid of plane tiles is
-// laid around the origin to extend the ocean past the small ocean
-// quad that ships in world.glb.
+// Wave-based ocean ported from Inthenew/Sketchbook (MIT). The wave
+// displacement is injected into Babylon's PBR vertex shader through
+// PBRCustomMaterial so the engine's lighting and normal-map pipeline
+// are preserved (three did the same via onBeforeCompile). A 2x2 grid of
+// ground tiles is laid around the origin to extend the ocean past the
+// small ocean quad that ships in world.glb.
 //
-// IMPORTANT: the wave formula in moveWave() (GLSL injected via
-// onBeforeCompile below) and getWaveHeightAt() (TypeScript) MUST stay in
-// sync. If you change one, change the other.
+// IMPORTANT: the wave formula in moveWave() (GLSL below) and
+// getWaveHeightAt() (TypeScript) MUST stay in sync. If you change one,
+// change the other.
 export class Ocean implements IUpdatable
 {
 	public updateOrder = UpdateOrder.World;
-	public material: THREE.MeshBasicMaterial;
+	public material: StandardMaterial;
 
 	private world: World;
 	private startTime: number;
@@ -28,166 +30,150 @@ export class Ocean implements IUpdatable
 	private readonly segNum = 200;
 	private readonly GrdRCs = 2;
 
-	private waveGeometry: THREE.PlaneGeometry | null = null;
-	private waveMaterial: THREE.MeshStandardMaterial | null = null;
-	private waterNormalMap: THREE.Texture | null = null;
-	private tiles: THREE.Mesh[] = [];
+	private waveMaterial: PBRCustomMaterial | null = null;
+	private waterNormalMap: Texture | null = null;
+	private tiles: Mesh[] = [];
 	private tileXOffsets: number[] = [];
 	private tileZOffsets: number[] = [];
 	private loaded = false;
 
 	private readonly uniforms = {
-		time: { value: 0 },
-		grid: { value: 1000 },
+		time: 0,
+		grid: 1000,
 	};
 
-	constructor(object: THREE.Mesh, world: World)
+	constructor(object: Mesh, world: World)
 	{
 		this.world = world;
 
 		// Hide the original ocean plane carried in world.glb - we render
 		// the tiled wave grid on top of it.
-		this.material = new THREE.MeshBasicMaterial({
-			color: 'skyblue',
-			transparent: true,
-			opacity: 0,
-		});
+		this.material = new StandardMaterial('oceanCarrier', world.scene);
+		this.material.alpha = 0;
 		object.material = this.material;
+		object.isVisible = false;
 
 		// Wall-clock start time - feeds the wave shader's `time` uniform.
-		// THREE.Clock used to do this; it is deprecated in favour of
-		// performance.now() (THREE.Timer is the official replacement but
-		// adds an updatable just to wrap the same call).
 		this.startTime = performance.now();
 		this.createOcean();
 	}
 
 	private createOcean(): void
 	{
-		const loadingManager = new THREE.LoadingManager();
-		loadingManager.onLoad = () => { this.initTiles(); };
-
-		const txtrLoader = new THREE.TextureLoader(loadingManager);
-		txtrLoader.load('src/img/water/waternormals.jpg', (texture) =>
+		const texture = new Texture('src/img/water/waternormals.jpg', this.world.scene, false, true, Texture.TRILINEAR_SAMPLINGMODE, () =>
 		{
-			texture.magFilter = THREE.LinearFilter;
-			texture.minFilter = THREE.LinearMipmapLinearFilter;
-			texture.generateMipmaps = true;
-			texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-			texture.offset.set(0, 0);
-			texture.repeat.set(1, 1);
-			texture.needsUpdate = true;
-			this.waterNormalMap = texture;
+			this.initTiles();
 		});
+		texture.wrapU = Texture.WRAP_ADDRESSMODE;
+		texture.wrapV = Texture.WRAP_ADDRESSMODE;
+		this.waterNormalMap = texture;
 	}
 
 	private initTiles(): void
 	{
-		this.waveGeometry = new THREE.PlaneGeometry(this.GrdSiz, this.GrdSiz, this.segNum, this.segNum);
-		this.waveGeometry.rotateX(-Math.PI * 0.5);
+		const scene = this.world.scene;
 
 		// Tweaked from the original 0.5 / 0.6: lower metalness lets a
 		// touch of refracted scene colour through, slightly slicker
 		// roughness sharpens highlights so the wave crests catch the
 		// sun instead of flat-shading.
-		this.waveMaterial = new THREE.MeshStandardMaterial({
-			normalMap: this.waterNormalMap,
-			metalness: 0.3,
-			roughness: 0.45,
-			name: 'ocean.001',
-		});
-		this.waveMaterial.onBeforeCompile = (shader) =>
-		{
-			shader.uniforms.time = this.uniforms.time;
-			shader.uniforms.grid = this.uniforms.grid;
-			shader.uniforms.noWaveCenter = { value: new THREE.Vector2(0.0, 0.0) };
-			shader.uniforms.noWaveHalfSize = { value: new THREE.Vector2(180.0, 140.0) };
-			shader.uniforms.noWaveHalfSize2 = { value: new THREE.Vector2(300.0, 330.0) };
+		const mat = new PBRCustomMaterial('ocean.001', scene);
+		mat.bumpTexture = this.waterNormalMap;
+		mat.metallic = 0.3;
+		mat.roughness = 0.45;
+		mat.backFaceCulling = false;
 
-			shader.vertexShader = shader.vertexShader.replace(
-				'void main() {',
-				`
-				uniform float time;
-				uniform float grid;
-				uniform vec2 noWaveCenter;
-				uniform vec2 noWaveHalfSize;
-				uniform vec2 noWaveHalfSize2;
-				varying float vHeight;
-				varying float vInvisible;
+		mat.AddUniform('time', 'float', null);
+		mat.AddUniform('grid', 'float', null);
+		mat.AddUniform('noWaveCenter', 'vec2', null);
+		mat.AddUniform('noWaveHalfSize', 'vec2', null);
+		mat.AddUniform('noWaveHalfSize2', 'vec2', null);
 
-				vec3 moveWave(vec3 p) {
-					float num = 0.7;
-					vec4 worldPos = modelMatrix * vec4(p, 1.0);
-					vec3 retVal = p;
-					float ang;
-					float kzx = 360.0 / grid;
+		mat.Vertex_Definitions(`
+			varying float vHeight;
+			varying float vInvisible;
 
-					ang = 50.0 * time + -1.0 * p.x * kzx + -2.0 * p.z * kzx;
-					if (ang > 360.0) ang -= 360.0;
-					ang = ang * 3.14159265 / 180.0;
-					retVal.y = num * 3.0 * sin(ang);
+			vec3 moveWave(vec3 p) {
+				float num = 0.7;
+				vec4 worldPos = world * vec4(p, 1.0);
+				vec3 retVal = p;
+				float ang;
+				float kzx = 360.0 / grid;
 
-					ang = 25.0 * time + -3.0 * p.x * kzx;
-					if (ang > 360.0) ang -= 360.0;
-					ang = ang * 3.14159265 / 180.0;
-					retVal.y += num * 2.0 * sin(ang);
+				ang = 50.0 * time + -1.0 * p.x * kzx + -2.0 * p.z * kzx;
+				if (ang > 360.0) ang -= 360.0;
+				ang = ang * 3.14159265 / 180.0;
+				retVal.y = num * 3.0 * sin(ang);
 
-					ang = 15.0 * time - 3.0 * p.z * kzx;
-					if (ang > 360.0) ang -= 360.0;
-					ang = ang * 3.14159265 / 180.0;
-					retVal.y += num * 2.0 * sin(ang);
+				ang = 25.0 * time + -3.0 * p.x * kzx;
+				if (ang > 360.0) ang -= 360.0;
+				ang = ang * 3.14159265 / 180.0;
+				retVal.y += num * 2.0 * sin(ang);
 
-					ang = 50.0 * time + 4.0 * p.x * kzx + 8.0 * p.z * kzx;
-					if (ang > 360.0) ang -= 360.0;
-					ang = ang * 3.14159265 / 180.0;
-					retVal.y += num * 0.5 * sin(ang);
+				ang = 15.0 * time - 3.0 * p.z * kzx;
+				if (ang > 360.0) ang -= 360.0;
+				ang = ang * 3.14159265 / 180.0;
+				retVal.y += num * 2.0 * sin(ang);
 
-					ang = 50.0 * time + 8.0 * p.x * kzx;
-					if (ang > 360.0) ang -= 360.0;
-					ang = ang * 3.14159265 / 180.0;
-					retVal.y += num * 0.5 * sin(ang);
+				ang = 50.0 * time + 4.0 * p.x * kzx + 8.0 * p.z * kzx;
+				if (ang > 360.0) ang -= 360.0;
+				ang = ang * 3.14159265 / 180.0;
+				retVal.y += num * 0.5 * sin(ang);
 
-					float inZone = 0.0;
-					if (abs(worldPos.x - noWaveCenter.x) < noWaveHalfSize.x &&
-							abs(worldPos.z - noWaveCenter.y) < noWaveHalfSize.y) {
-						inZone = 1.0;
-						retVal.y = -100.0;
-					} else if (abs(worldPos.x - noWaveCenter.x) < noWaveHalfSize2.x &&
-								abs(worldPos.z - noWaveCenter.y) < noWaveHalfSize2.y) {
-						retVal.y = 8.5;
-					} else {
-						retVal.y += 3.6;
-					}
-					vInvisible = inZone;
-					return retVal;
+				ang = 50.0 * time + 8.0 * p.x * kzx;
+				if (ang > 360.0) ang -= 360.0;
+				ang = ang * 3.14159265 / 180.0;
+				retVal.y += num * 0.5 * sin(ang);
+
+				float inZone = 0.0;
+				if (abs(worldPos.x - noWaveCenter.x) < noWaveHalfSize.x &&
+						abs(worldPos.z - noWaveCenter.y) < noWaveHalfSize.y) {
+					inZone = 1.0;
+					retVal.y = -100.0;
+				} else if (abs(worldPos.x - noWaveCenter.x) < noWaveHalfSize2.x &&
+							abs(worldPos.z - noWaveCenter.y) < noWaveHalfSize2.y) {
+					retVal.y = 8.5;
+				} else {
+					retVal.y += 3.6;
 				}
+				vInvisible = inZone;
+				return retVal;
+			}
+		`);
 
-				void main() {
-				`
-			);
+		mat.Vertex_Before_PositionUpdated(`
+			positionUpdated = moveWave(positionUpdated);
+			vHeight = positionUpdated.y;
+		`);
 
-			shader.vertexShader = shader.vertexShader.replace(
-				'#include <begin_vertex>',
-				`
-				#include <begin_vertex>
-				transformed = moveWave(transformed);
-				vHeight = transformed.y;
-				`
-			);
+		mat.Fragment_Definitions(`
+			varying float vHeight;
+			varying float vInvisible;
+		`);
 
-			shader.fragmentShader = 'varying float vHeight;\nvarying float vInvisible;\n' + shader.fragmentShader;
-			shader.fragmentShader = shader.fragmentShader.replace(
-				'#include <color_fragment>',
-				`
-				#include <color_fragment>
-				if(vInvisible > 0.5) { discard; }
-				// Deeper teal in the troughs, brighter aqua at the crests -
-				// gives the sea a livelier vertical gradient than the old
-				// flat dark-blue → muted-blue mix.
-				diffuseColor.rgb = mix(vec3(0.03, 0.10, 0.22), vec3(0.18, 0.42, 0.62), smoothstep(0.0, 6.0, vHeight));
-				`
-			);
-		};
+		// Deeper teal in the troughs, brighter aqua at the crests -
+		// gives the sea a livelier vertical gradient than the old
+		// flat dark-blue -> muted-blue mix.
+		mat.Fragment_Custom_Albedo(`
+			surfaceAlbedo = mix(vec3(0.03, 0.10, 0.22), vec3(0.18, 0.42, 0.62), smoothstep(0.0, 6.0, vHeight));
+		`);
+
+		mat.Fragment_Custom_Alpha(`
+			if (vInvisible > 0.5) { discard; }
+		`);
+
+		mat.onBindObservable.add(() =>
+		{
+			const effect = mat.getEffect();
+			if (effect === null || effect === undefined) return;
+			effect.setFloat('time', this.uniforms.time);
+			effect.setFloat('grid', this.uniforms.grid);
+			effect.setFloat2('noWaveCenter', 0.0, 0.0);
+			effect.setFloat2('noWaveHalfSize', 180.0, 140.0);
+			effect.setFloat2('noWaveHalfSize2', 300.0, 330.0);
+		});
+
+		this.waveMaterial = mat;
 
 		// Lay out a GrdRCs x GrdRCs grid of tiles centered on origin.
 		let zx = -0.5 * this.GrdRCs * this.GrdSiz + 0.5 * this.GrdSiz;
@@ -203,13 +189,19 @@ export class Ocean implements IUpdatable
 		{
 			for (let x = 0; x < this.GrdRCs; x++)
 			{
-				const tile = new THREE.Mesh(this.waveGeometry, this.waveMaterial);
+				const tile = MeshBuilder.CreateGround('oceanTile' + n, { width: this.GrdSiz, height: this.GrdSiz, subdivisions: this.segNum }, scene);
+				tile.material = mat;
 				tile.position.set(this.tileXOffsets[x], 12, -this.tileZOffsets[z]);
+				tile.isPickable = false;
+				tile.receiveShadows = true;
+				// The vertex displacement moves geometry well outside the
+				// flat ground's bounds; skip culling so a tile whose
+				// centre is off-screen doesn't vanish mid-wave.
+				tile.alwaysSelectAsActiveMesh = true;
 				// Outline pass skips ocean tiles - wave displacement
 				// would otherwise generate constant Sobel noise across
 				// the whole water surface every frame.
-				tile.layers.set(RenderLayer.OutlineSkip);
-				this.world.graphicsWorld.add(tile);
+				markOutlineSkip(tile);
 				this.tiles[n] = tile;
 				n++;
 			}
@@ -248,7 +240,7 @@ export class Ocean implements IUpdatable
 		}
 
 		const num = 0.7;
-		const kzx = 360.0 / this.uniforms.grid.value;
+		const kzx = 360.0 / this.uniforms.grid;
 		// Inline degrees -> radians using the cached DEG2RAD constant
 		// (Math.PI / 180 = ~0.01745). Saves a function-call indirection
 		// per sample, called 5x per vertex per query.
@@ -291,16 +283,16 @@ export class Ocean implements IUpdatable
 	public update(_timeStep: number): void
 	{
 		if (!this.loaded) return;
-		this.uniforms.time.value = this.getElapsedTime();
+		this.uniforms.time = this.getElapsedTime();
 
 		if (this.waterNormalMap)
 		{
 			// Faster scroll than the original 5e-5 - the old rate was
 			// barely perceptible, so the sea looked still even though
-			// the geometry was moving. 4× brings the ripple drift up
+			// the geometry was moving. 4x brings the ripple drift up
 			// to a recognisable surface-current speed.
-			this.waterNormalMap.offset.x -= 0.0002;
-			this.waterNormalMap.offset.y += 0.0001;
+			this.waterNormalMap.uOffset -= 0.0002;
+			this.waterNormalMap.vOffset += 0.0001;
 		}
 	}
 }

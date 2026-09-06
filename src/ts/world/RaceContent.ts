@@ -1,10 +1,13 @@
-import * as THREE from 'three';
+import { Color3, LinesMesh, MeshBuilder, TransformNode, Vector3 } from '@babylonjs/core';
+
 import { World } from './World';
 import { Scenario } from './scenarios/Scenario';
 import { PathNode } from './scenarios/PathNode';
 import { RaceCheckpoint } from './RaceCheckpoint';
 import { IUpdatable } from '../interfaces/IUpdatable';
 import { UpdateOrder } from '../enums/UpdateOrder';
+import { CatmullRomCurve3 } from '../core/CatmullRomCurve3';
+import * as Utils from '../core/FunctionLibrary';
 
 // Curve-based lap tracking for race scenarios. Walks the scenario's AI
 // first_node through its path graph, fits a CatmullRom curve, places a
@@ -19,20 +22,27 @@ export class RaceContent implements IUpdatable
 	public updateOrder = UpdateOrder.Scenarios;
 
 	public scenario: Scenario;
-	public checkpointGroup: THREE.Group = new THREE.Group();
-	public curve: THREE.CatmullRomCurve3 | null = null;
+	public checkpointGroup: TransformNode;
+	public curve: CatmullRomCurve3 | null = null;
 	public checkpoints: RaceCheckpoint[] = [];
 
 	// Single-player race state. socketControl held this on Character for
 	// per-player tracking; our scenarios always have one human driver.
 	private nextCheckpointIndex = -1;
 	private lap = 0;
-	private prevPos = new THREE.Vector3();
+	private prevPos = new Vector3();
+	private debugLine: LinesMesh | null = null;
 	public onLap: ((lap: number) => void) | undefined;
 
 	constructor(scenario: Scenario)
 	{
 		this.scenario = scenario;
+		this.checkpointGroup = new TransformNode('raceCheckpoints', scenario.world.scene);
+	}
+
+	private get world(): World
+	{
+		return this.scenario.world;
 	}
 
 	// Build the curve and checkpoint planes from the AI spawn's first_node.
@@ -47,19 +57,19 @@ export class RaceContent implements IUpdatable
 
 		const points = allNodes.map(n =>
 		{
-			const v = new THREE.Vector3();
-			n.object.getWorldPosition(v);
+			const v = new Vector3();
+			Utils.getWorldPosition(n.object, v);
 			return v;
 		});
 
-		this.curve = new THREE.CatmullRomCurve3(points, true, 'chordal', 0.5);
+		this.curve = new CatmullRomCurve3(points, true, 'chordal', 0.5);
 
 		// Visible debug-only line tracing the curve.
 		const samples = this.curve.getPoints(200);
-		const geometry = new THREE.BufferGeometry().setFromPoints(samples);
-		const line = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: 0xffaa00 }));
-		line.visible = false;
-		this.checkpointGroup.add(line);
+		this.debugLine = MeshBuilder.CreateLines('raceCurve', { points: samples }, this.world.scene);
+		this.debugLine.color = Color3.FromHexString('#ffaa00');
+		this.debugLine.parent = this.checkpointGroup;
+		this.debugLine.setEnabled(false);
 
 		this.checkpoints = points.map((p, i) => new RaceCheckpoint(p, i, this, this.curve!));
 		this.checkpoints.forEach(cp => { cp.mesh.position.y += 0.01; });
@@ -67,15 +77,14 @@ export class RaceContent implements IUpdatable
 		this.nextCheckpointIndex = 0;
 		this.lap = 0;
 
-		this.scenario.world.graphicsWorld.add(this.checkpointGroup);
-		this.scenario.world.registerUpdatable(this);
+		this.world.registerUpdatable(this);
 		return true;
 	}
 
 	public dispose(): void
 	{
-		this.scenario.world.graphicsWorld.remove(this.checkpointGroup);
-		this.scenario.world.unregisterUpdatable(this);
+		this.world.unregisterUpdatable(this);
+		this.world.removeNode(this.checkpointGroup);
 		this.checkpoints = [];
 		this.curve = null;
 		this.nextCheckpointIndex = -1;
@@ -84,15 +93,11 @@ export class RaceContent implements IUpdatable
 	// Toggle the visible checkpoint planes on/off (for debugging).
 	public setCheckpointsVisible(visible: boolean): void
 	{
-		for (const cp of this.checkpoints) cp.mesh.visible = visible;
-		// children[0] is the line trace
-		if (this.checkpointGroup.children.length > 0)
-		{
-			this.checkpointGroup.children[0].visible = visible;
-		}
+		for (const cp of this.checkpoints) cp.mesh.setEnabled(visible);
+		if (this.debugLine !== null) this.debugLine.setEnabled(visible);
 	}
 
-	public findClosestTOnCurve(target: THREE.Vector3, samples = 500): number
+	public findClosestTOnCurve(target: Vector3, samples = 500): number
 	{
 		if (this.curve === null) return 0;
 		let bestT = 0;
@@ -101,7 +106,7 @@ export class RaceContent implements IUpdatable
 		{
 			const u = i / samples;
 			const p = this.curve.getPointAt(u);
-			const d = p.distanceToSquared(target);
+			const d = Vector3.DistanceSquared(p, target);
 			if (d < bestDist)
 			{
 				bestDist = d;
@@ -117,7 +122,7 @@ export class RaceContent implements IUpdatable
 
 		// Track the camera position - single-player follows the human
 		// driver / character / vehicle through the camera operator.
-		const currPos = this.scenario.world.camera.position;
+		const currPos = this.world.camera.position;
 		for (const cp of this.checkpoints)
 		{
 			if (cp.checkCross(this.prevPos, currPos))
@@ -125,7 +130,7 @@ export class RaceContent implements IUpdatable
 				this.onCheckpointPassed(cp.index);
 			}
 		}
-		this.prevPos.copy(currPos);
+		this.prevPos.copyFrom(currPos);
 	}
 
 	private onCheckpointPassed(index: number): void
@@ -137,11 +142,11 @@ export class RaceContent implements IUpdatable
 		{
 			this.lap++;
 			this.onLap?.(this.lap);
-			this.scenario.world.sfxBus.playLap();
+			this.world.sfxBus.playLap();
 		}
 		else
 		{
-			this.scenario.world.sfxBus.playCheckpoint();
+			this.world.sfxBus.playCheckpoint();
 		}
 	}
 
@@ -159,16 +164,17 @@ export class RaceContent implements IUpdatable
 		// Fallback: walk the scenario rootNode's userData.
 		const rn = this.scenario.rootNode;
 		if (rn === undefined) return null;
-		for (const child of rn.children)
+		for (const child of rn.getChildren())
 		{
-			if (child.userData?.first_node) return child.userData.first_node as string;
+			const ud = Utils.userData(child);
+			if (ud?.first_node) return ud.first_node as string;
 		}
 		return null;
 	}
 
 	private collectPathNodes(firstNodeName: string): PathNode[]
 	{
-		for (const path of this.scenario.world.paths)
+		for (const path of this.world.paths)
 		{
 			const start = path.nodes[firstNodeName];
 			if (start === undefined) continue;

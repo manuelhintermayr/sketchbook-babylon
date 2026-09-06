@@ -1,6 +1,6 @@
-import * as THREE from 'three';
-import * as Utils from '../../../core/FunctionLibrary';
+import { Quaternion, Vector3 } from '@babylonjs/core';
 
+import * as Utils from '../../../core/FunctionLibrary';
 import { Character } from '../../Character';
 import { Side } from '../../../enums/Side';
 import { EntityType } from '../../../enums/EntityType';
@@ -11,6 +11,7 @@ import { Vehicle } from '../../../vehicles/Vehicle';
 import { Falling } from '../Falling';
 import { DropRolling } from '../DropRolling';
 import { ExitingStateBase } from './ExitingStateBase';
+import { PhysicsWorld } from '../../../physics/PhysicsWorld';
 
 export class ExitingVehicle extends ExitingStateBase
 {
@@ -20,7 +21,7 @@ export class ExitingVehicle extends ExitingStateBase
 
 		this.exitPoint = seat.entryPoints[0];
 
-		this.endPosition.copy(this.exitPoint.position);
+		this.endPosition.copyFrom(this.exitPoint.position);
 		this.endPosition.y += 0.52;
 
 		const side = Utils.detectRelativeSide(seat.seatPointObject, this.exitPoint);
@@ -49,7 +50,7 @@ export class ExitingVehicle extends ExitingStateBase
 				this.character.setState(new Falling(this.character));
 				this.character.leaveSeat();
 			}
-			else if ((this.vehicle as unknown as Vehicle).collision.velocity.length() > 1)
+			else if (PhysicsWorld.linearSpeed((this.vehicle as unknown as Vehicle).collision) > 1)
 			{
 				this.character.setState(new DropRolling(this.character));
 				this.character.leaveSeat();
@@ -77,12 +78,12 @@ export class ExitingVehicle extends ExitingStateBase
 			// Position
 			let factor = this.timer / this.animationLength;
 			let smoothFactor = Utils.easeInOutSine(factor);
-			let lerpPosition = new THREE.Vector3().lerpVectors(this.startPosition, this.endPosition, smoothFactor);
+			let lerpPosition = Vector3.Lerp(this.startPosition, this.endPosition, smoothFactor);
 			this.character.setPosition(lerpPosition.x, lerpPosition.y, lerpPosition.z);
 
 			// Rotation
 			this.updateEndRotation();
-			this.character.quaternion.slerpQuaternions(this.startRotation, this.endRotation, smoothFactor);
+			Quaternion.SlerpToRef(this.startRotation, this.endRotation, smoothFactor, Utils.getQuaternion(this.character));
 		}
 	}
 }

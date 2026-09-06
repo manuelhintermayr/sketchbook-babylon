@@ -19,6 +19,8 @@
 // Pattern adapted from manuelhintermayr-portfolio-v2/MobileJoystick +
 // portfolio/three-js useCustomTouchControls.
 
+import { Vector3 } from '@babylonjs/core';
+
 import { World } from '../world/World';
 import { EntityType } from '../enums/EntityType';
 import { DialogBox } from '../world/ui/DialogBox';
@@ -277,7 +279,7 @@ export class TouchControls
 		{
 			for (const v of this.world.vehicles)
 			{
-				if (player.position.distanceTo(v.position) < NEAR_VEHICLE_DISTANCE)
+				if (Vector3.Distance(player.position, v.position) < NEAR_VEHICLE_DISTANCE)
 				{
 					nextNearVehicle = true;
 					break;

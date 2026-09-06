@@ -1,5 +1,4 @@
-import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
+import { Axis, PhysicsBody, Quaternion, Space, TransformNode, Vector3 } from '@babylonjs/core';
 
 import { Vehicle } from './Vehicle';
 import { IControllable } from '../interfaces/IControllable';
@@ -11,53 +10,56 @@ import { EntityType } from '../enums/EntityType';
 import { ENGINE_PROFILES } from '../world/audio/EngineSound';
 import { commonVehicleControls } from '../core/CommonControls';
 import { t } from '../i18n';
+import { LoadedModel } from '../core/LoadingManager';
 
 // Module-scoped scratch - see Helicopter.ts for the same pattern.
 // physicsPreStep ran ~10 allocs per frame per plane; with these
 // reused all the way down it's zero.
-const _quat = new THREE.Quaternion();
-const _right = new THREE.Vector3();
-const _up = new THREE.Vector3();
-const _forward = new THREE.Vector3();
-const _forwardCannon = new CANNON.Vec3();
-const _lookVelocity = new THREE.Vector3();
-const _rotStabVelocity = new THREE.Quaternion();
-const _rotStabEuler = new THREE.Euler();
-const _RIGHT_AXIS = new THREE.Vector3(1, 0, 0);
-const _UP_AXIS = new THREE.Vector3(0, 1, 0);
-const _FORWARD_AXIS = new THREE.Vector3(0, 0, 1);
+const _quat = new Quaternion();
+const _right = new Vector3();
+const _up = new Vector3();
+const _forward = new Vector3();
+const _velocity = new Vector3();
+const _angVel = new Vector3();
+const _lookVelocity = new Vector3();
+const _rotStabVelocity = new Quaternion();
+const _rotStabEuler = new Vector3();
+const _RIGHT_AXIS = new Vector3(1, 0, 0);
+const _UP_AXIS = new Vector3(0, 1, 0);
+const _FORWARD_AXIS = new Vector3(0, 0, 1);
 
 export class Airplane extends Vehicle implements IControllable, IWorldEntity
 {
 	public entityType: EntityType = EntityType.Airplane;
-	public rotor: THREE.Object3D;
-	public leftAileron: THREE.Object3D;
-	public rightAileron: THREE.Object3D;
-	public elevators: THREE.Object3D[] = [];
-	public rudder: THREE.Object3D;
+	public rotor: TransformNode;
+	public leftAileron: TransformNode;
+	public rightAileron: TransformNode;
+	public elevators: TransformNode[] = [];
+	public rudder: TransformNode;
 
-	private steeringSimulator: SpringSimulator; 
+	private steeringSimulator: SpringSimulator;
 	private aileronSimulator: SpringSimulator;
 	private elevatorSimulator: SpringSimulator;
 	private rudderSimulator: SpringSimulator;
 
 	private enginePower: number = 0;
 	private lastDrag: number = 0;
+	private currentMass: number = 50;
 
-	constructor(gltf: any)
+	constructor(model: LoadedModel)
 	{
-		super(gltf, {
+		super(model, {
 			radius: 0.12,
 			suspensionStiffness: 150,
 			suspensionRestLength: 0.25,
 			dampingRelaxation: 5,
 			dampingCompression: 5,
-			directionLocal: new CANNON.Vec3(0, -1, 0),
-			axleLocal: new CANNON.Vec3(-1, 0, 0),
-			chassisConnectionPointLocal: new CANNON.Vec3(),
+			directionLocal: new Vector3(0, -1, 0),
+			axleLocal: new Vector3(-1, 0, 0),
+			chassisConnectionPointLocal: new Vector3(),
 		});
 
-		this.readAirplaneData(gltf);
+		this.readAirplaneData(model);
 
 		this.actions = {
 			'throttle': new KeyBinding('ShiftLeft'),
@@ -88,7 +90,7 @@ export class Airplane extends Vehicle implements IControllable, IWorldEntity
 
 	public noDirectionPressed(): boolean
 	{
-		let result = 
+		let result =
 		!this.actions.throttle.isPressed &&
 		!this.actions.brake.isPressed &&
 		!this.actions.yawLeft.isPressed &&
@@ -102,7 +104,7 @@ export class Airplane extends Vehicle implements IControllable, IWorldEntity
 	public update(timeStep: number): void
 	{
 		super.update(timeStep);
-		
+
 		// Rotors visuals
 		if (this.controllingCharacter !== undefined)
 		{
@@ -114,7 +116,7 @@ export class Airplane extends Vehicle implements IControllable, IWorldEntity
 			if (this.enginePower > 0) this.enginePower -= timeStep * 0.12;
 			if (this.enginePower < 0) this.enginePower = 0;
 		}
-		this.rotor.rotateX(this.enginePower * timeStep * 60);
+		this.rotor.rotate(Axis.X, this.enginePower * timeStep * 60, Space.LOCAL);
 
 		// Steering
 		if (this.rayCastVehicle.numWheelsOnGround > 0)
@@ -152,7 +154,7 @@ export class Airplane extends Vehicle implements IControllable, IWorldEntity
 		{
 			this.aileronSimulator.target = -partsRotationAmount;
 		}
-		else 
+		else
 		{
 			this.aileronSimulator.target = 0;
 		}
@@ -180,7 +182,7 @@ export class Airplane extends Vehicle implements IControllable, IWorldEntity
 		{
 			this.rudderSimulator.target = -partsRotationAmount;
 		}
-		else 
+		else
 		{
 			this.rudderSimulator.target = 0;
 		}
@@ -191,96 +193,101 @@ export class Airplane extends Vehicle implements IControllable, IWorldEntity
 		this.rudderSimulator.simulate(timeStep);
 
 		// Rotate parts
-		this.leftAileron.rotation.y = this.aileronSimulator.position;
-		this.rightAileron.rotation.y = -this.aileronSimulator.position;
+		Utils.setEulerComponent(this.leftAileron, 'y', this.aileronSimulator.position);
+		Utils.setEulerComponent(this.rightAileron, 'y', -this.aileronSimulator.position);
 		this.elevators.forEach((elevator) =>
 		{
-			elevator.rotation.y = this.elevatorSimulator.position;
+			Utils.setEulerComponent(elevator, 'y', this.elevatorSimulator.position);
 		});
-		this.rudder.rotation.y = this.rudderSimulator.position;
+		Utils.setEulerComponent(this.rudder, 'y', this.rudderSimulator.position);
 	}
 
-	public physicsPreStep(body: CANNON.Body, plane: Airplane): void
+	public physicsPreStep(body: PhysicsBody, plane: Airplane): void
 	{
-		_quat.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
-		_right.copy(_RIGHT_AXIS).applyQuaternion(_quat);
-		_up.copy(_UP_AXIS).applyQuaternion(_quat);
-		_forward.copy(_FORWARD_AXIS).applyQuaternion(_quat);
+		_quat.copyFrom(this.rotationQuaternion);
+		_right.copyFrom(_RIGHT_AXIS).applyRotationQuaternionInPlace(_quat);
+		_up.copyFrom(_UP_AXIS).applyRotationQuaternionInPlace(_quat);
+		_forward.copyFrom(_FORWARD_AXIS).applyRotationQuaternionInPlace(_quat);
 
-		// Forward speed via dot product - copy _forward into a CANNON
-		// scratch so we can use the body.velocity.dot() native call
-		// without allocating a temp Vec3 each frame.
-		_forwardCannon.set(_forward.x, _forward.y, _forward.z);
-		const velLength1 = body.velocity.length();
-		const currentSpeed = body.velocity.dot(_forwardCannon);
+		body.getLinearVelocityToRef(_velocity);
+		body.getAngularVelocityToRef(_angVel);
+		const velLength1 = _velocity.length();
+		const currentSpeed = Vector3.Dot(_velocity, _forward);
 
 		// Rotation controls influence
 		let flightModeInfluence = currentSpeed / 10;
-		flightModeInfluence = THREE.MathUtils.clamp(flightModeInfluence, 0, 1);
+		flightModeInfluence = Utils.clamp(flightModeInfluence, 0, 1);
 
 		let lowerMassInfluence = currentSpeed / 10;
-		lowerMassInfluence = THREE.MathUtils.clamp(lowerMassInfluence, 0, 1);
-		this.collision.mass = 50 * (1 - (lowerMassInfluence * 0.6));
+		lowerMassInfluence = Utils.clamp(lowerMassInfluence, 0, 1);
+		// Lighter at speed. Havok recomputes inertia for the new mass;
+		// only write when the value actually moved to spare the WASM call.
+		const targetMass = 50 * (1 - (lowerMassInfluence * 0.6));
+		if (Math.abs(targetMass - this.currentMass) > 0.01)
+		{
+			this.currentMass = targetMass;
+			body.setMassProperties({ mass: targetMass, centerOfMass: Vector3.Zero() });
+		}
 
-		// Rotation stabilization. _lookVelocity is body.velocity copied
-		// into a THREE.Vector3 (so we can call setFromUnitVectors which
-		// only takes THREE types) and normalised.
-		_lookVelocity.set(body.velocity.x, body.velocity.y, body.velocity.z).normalize();
-		_rotStabVelocity.setFromUnitVectors(_forward, _lookVelocity);
+		// Rotation stabilization. _lookVelocity is the velocity
+		// normalised; the quaternion between forward and it, scaled to
+		// 0.3, becomes a small corrective angular velocity.
+		_lookVelocity.copyFrom(_velocity).normalize();
+		Quaternion.FromUnitVectorsToRef(_forward, _lookVelocity, _rotStabVelocity);
 		_rotStabVelocity.x *= 0.3;
 		_rotStabVelocity.y *= 0.3;
 		_rotStabVelocity.z *= 0.3;
 		_rotStabVelocity.w *= 0.3;
-		_rotStabEuler.setFromQuaternion(_rotStabVelocity);
+		Utils.eulerFromQuaternion(_rotStabVelocity, 'XYZ', _rotStabEuler);
 
-		let rotStabInfluence = THREE.MathUtils.clamp(velLength1 - 1, 0, 0.1);  // Only with speed greater than 1 UPS
+		let rotStabInfluence = Utils.clamp(velLength1 - 1, 0, 0.1);  // Only with speed greater than 1 UPS
 		rotStabInfluence *= (this.rayCastVehicle.numWheelsOnGround > 0 && currentSpeed < 0 ? 0 : 1);    // Reverse fix
 		const loopFix = (this.actions.throttle.isPressed && currentSpeed > 0 ? 0 : 1);
 
-		body.angularVelocity.x += _rotStabEuler.x * rotStabInfluence * loopFix;
-		body.angularVelocity.y += _rotStabEuler.y * rotStabInfluence;
-		body.angularVelocity.z += _rotStabEuler.z * rotStabInfluence * loopFix;
+		_angVel.x += _rotStabEuler.x * rotStabInfluence * loopFix;
+		_angVel.y += _rotStabEuler.y * rotStabInfluence;
+		_angVel.z += _rotStabEuler.z * rotStabInfluence * loopFix;
 
 		// Pitch
 		if (plane.actions.pitchUp.isPressed)
 		{
-			body.angularVelocity.x -= _right.x * 0.04 * flightModeInfluence * this.enginePower;
-			body.angularVelocity.y -= _right.y * 0.04 * flightModeInfluence * this.enginePower;
-			body.angularVelocity.z -= _right.z * 0.04 * flightModeInfluence * this.enginePower;
+			_angVel.x -= _right.x * 0.04 * flightModeInfluence * this.enginePower;
+			_angVel.y -= _right.y * 0.04 * flightModeInfluence * this.enginePower;
+			_angVel.z -= _right.z * 0.04 * flightModeInfluence * this.enginePower;
 		}
 		if (plane.actions.pitchDown.isPressed)
 		{
-			body.angularVelocity.x += _right.x * 0.04 * flightModeInfluence * this.enginePower;
-			body.angularVelocity.y += _right.y * 0.04 * flightModeInfluence * this.enginePower;
-			body.angularVelocity.z += _right.z * 0.04 * flightModeInfluence * this.enginePower;
+			_angVel.x += _right.x * 0.04 * flightModeInfluence * this.enginePower;
+			_angVel.y += _right.y * 0.04 * flightModeInfluence * this.enginePower;
+			_angVel.z += _right.z * 0.04 * flightModeInfluence * this.enginePower;
 		}
 
 		// Yaw
 		if (plane.actions.yawLeft.isPressed)
 		{
-			body.angularVelocity.x += _up.x * 0.02 * flightModeInfluence * this.enginePower;
-			body.angularVelocity.y += _up.y * 0.02 * flightModeInfluence * this.enginePower;
-			body.angularVelocity.z += _up.z * 0.02 * flightModeInfluence * this.enginePower;
+			_angVel.x += _up.x * 0.02 * flightModeInfluence * this.enginePower;
+			_angVel.y += _up.y * 0.02 * flightModeInfluence * this.enginePower;
+			_angVel.z += _up.z * 0.02 * flightModeInfluence * this.enginePower;
 		}
 		if (plane.actions.yawRight.isPressed)
 		{
-			body.angularVelocity.x -= _up.x * 0.02 * flightModeInfluence * this.enginePower;
-			body.angularVelocity.y -= _up.y * 0.02 * flightModeInfluence * this.enginePower;
-			body.angularVelocity.z -= _up.z * 0.02 * flightModeInfluence * this.enginePower;
+			_angVel.x -= _up.x * 0.02 * flightModeInfluence * this.enginePower;
+			_angVel.y -= _up.y * 0.02 * flightModeInfluence * this.enginePower;
+			_angVel.z -= _up.z * 0.02 * flightModeInfluence * this.enginePower;
 		}
 
 		// Roll
 		if (plane.actions.rollLeft.isPressed)
 		{
-			body.angularVelocity.x -= _forward.x * 0.055 * flightModeInfluence * this.enginePower;
-			body.angularVelocity.y -= _forward.y * 0.055 * flightModeInfluence * this.enginePower;
-			body.angularVelocity.z -= _forward.z * 0.055 * flightModeInfluence * this.enginePower;
+			_angVel.x -= _forward.x * 0.055 * flightModeInfluence * this.enginePower;
+			_angVel.y -= _forward.y * 0.055 * flightModeInfluence * this.enginePower;
+			_angVel.z -= _forward.z * 0.055 * flightModeInfluence * this.enginePower;
 		}
 		if (plane.actions.rollRight.isPressed)
 		{
-			body.angularVelocity.x += _forward.x * 0.055 * flightModeInfluence * this.enginePower;
-			body.angularVelocity.y += _forward.y * 0.055 * flightModeInfluence * this.enginePower;
-			body.angularVelocity.z += _forward.z * 0.055 * flightModeInfluence * this.enginePower;
+			_angVel.x += _forward.x * 0.055 * flightModeInfluence * this.enginePower;
+			_angVel.y += _forward.y * 0.055 * flightModeInfluence * this.enginePower;
+			_angVel.z += _forward.z * 0.055 * flightModeInfluence * this.enginePower;
 		}
 
 		// Thrust
@@ -298,29 +305,32 @@ export class Airplane extends Vehicle implements IControllable, IWorldEntity
 			speedModifier = 0;
 		}
 
-		body.velocity.x += (velLength1 * this.lastDrag + speedModifier) * _forward.x * this.enginePower;
-		body.velocity.y += (velLength1 * this.lastDrag + speedModifier) * _forward.y * this.enginePower;
-		body.velocity.z += (velLength1 * this.lastDrag + speedModifier) * _forward.z * this.enginePower;
+		_velocity.x += (velLength1 * this.lastDrag + speedModifier) * _forward.x * this.enginePower;
+		_velocity.y += (velLength1 * this.lastDrag + speedModifier) * _forward.y * this.enginePower;
+		_velocity.z += (velLength1 * this.lastDrag + speedModifier) * _forward.z * this.enginePower;
 
 		// Drag
-		let velLength2 = body.velocity.length();
+		let velLength2 = _velocity.length();
 		const drag = Math.pow(velLength2, 1) * 0.003 * this.enginePower;
-		body.velocity.x -= body.velocity.x * drag;
-		body.velocity.y -= body.velocity.y * drag;
-		body.velocity.z -= body.velocity.z * drag;
+		_velocity.x -= _velocity.x * drag;
+		_velocity.y -= _velocity.y * drag;
+		_velocity.z -= _velocity.z * drag;
 		this.lastDrag = drag;
 
 		// Lift
 		let lift = Math.pow(velLength2, 1) * 0.005 * this.enginePower;
-		lift = THREE.MathUtils.clamp(lift, 0, 0.05);
-		body.velocity.x += _up.x * lift;
-		body.velocity.y += _up.y * lift;
-		body.velocity.z += _up.z * lift;
+		lift = Utils.clamp(lift, 0, 0.05);
+		_velocity.x += _up.x * lift;
+		_velocity.y += _up.y * lift;
+		_velocity.z += _up.z * lift;
 
 		// Angular damping
-		body.angularVelocity.x = THREE.MathUtils.lerp(body.angularVelocity.x, body.angularVelocity.x * 0.98, flightModeInfluence);
-		body.angularVelocity.y = THREE.MathUtils.lerp(body.angularVelocity.y, body.angularVelocity.y * 0.98, flightModeInfluence);
-		body.angularVelocity.z = THREE.MathUtils.lerp(body.angularVelocity.z, body.angularVelocity.z * 0.98, flightModeInfluence);
+		_angVel.x = Utils.lerp(_angVel.x, _angVel.x * 0.98, flightModeInfluence);
+		_angVel.y = Utils.lerp(_angVel.y, _angVel.y * 0.98, flightModeInfluence);
+		_angVel.z = Utils.lerp(_angVel.z, _angVel.z * 0.98, flightModeInfluence);
+
+		body.setLinearVelocity(_velocity);
+		body.setAngularVelocity(_angVel);
 	}
 
 	public onInputChange(): void
@@ -347,37 +357,36 @@ export class Airplane extends Vehicle implements IControllable, IWorldEntity
 		}
 	}
 
-	public readAirplaneData(gltf: any): void
+	public readAirplaneData(model: LoadedModel): void
 	{
-		gltf.scene.traverse((child) => {
-			if (child.hasOwnProperty('userData'))
+		Utils.traverse(model.root, (child) => {
+			if (!(child instanceof TransformNode)) return;
+			const ud = Utils.userData(child);
+			if (ud.hasOwnProperty('data'))
 			{
-				if (child.userData.hasOwnProperty('data'))
+				if (ud.data === 'rotor')
 				{
-					if (child.userData.data === 'rotor')
+					this.rotor = child;
+				}
+				if (ud.data === 'rudder')
+				{
+					this.rudder = child;
+				}
+				if (ud.data === 'elevator')
+				{
+					this.elevators.push(child);
+				}
+				if (ud.data === 'aileron')
+				{
+					if (ud.hasOwnProperty('side'))
 					{
-						this.rotor = child;
-					}
-					if (child.userData.data === 'rudder')
-					{
-						this.rudder = child;
-					}
-					if (child.userData.data === 'elevator')
-					{
-						this.elevators.push(child);
-					}
-					if (child.userData.data === 'aileron')
-					{
-						if (child.userData.hasOwnProperty('side')) 
+						if (ud.side === 'left')
 						{
-							if (child.userData.side === 'left')
-							{
-								this.leftAileron = child;
-							}
-							else if (child.userData.side === 'right')
-							{
-								this.rightAileron = child;
-							}
+							this.leftAileron = child;
+						}
+						else if (ud.side === 'right')
+						{
+							this.rightAileron = child;
 						}
 					}
 				}

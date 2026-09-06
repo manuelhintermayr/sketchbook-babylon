@@ -1,4 +1,5 @@
-import * as THREE from 'three';
+import { TransformNode, Vector3 } from '@babylonjs/core';
+
 import { ISpawnPoint } from '../../interfaces/ISpawnPoint';
 import { World } from '../World';
 import { Character } from '../../characters/Character';
@@ -28,17 +29,18 @@ let anonymousNpcCounter = 1;
 // created next to the NPC that opens the DialogBox on E-press.
 export class NPCSpawnPoint implements ISpawnPoint
 {
-	private object: THREE.Object3D;
+	private object: TransformNode;
 	private firstAINode: string | undefined;
 	private dialog: Dialog | undefined;
 	private role: string | undefined;
 
-	constructor(object: THREE.Object3D, options?: { dialog?: Dialog; role?: string })
+	constructor(object: TransformNode, options?: { dialog?: Dialog; role?: string })
 	{
 		this.object = object;
-		if (typeof object.userData.first_node === 'string')
+		const ud = Utils.userData(object);
+		if (typeof ud.first_node === 'string')
 		{
-			this.firstAINode = object.userData.first_node;
+			this.firstAINode = ud.first_node;
 		}
 		this.dialog = options?.dialog;
 		this.role = options?.role;
@@ -49,9 +51,10 @@ export class NPCSpawnPoint implements ISpawnPoint
 		loadingManager.loadGLTF('build/assets/boxman.glb', (model) =>
 		{
 			const npc = new Character(model);
+			const ud = Utils.userData(this.object);
 
-			const worldPos = new THREE.Vector3();
-			this.object.getWorldPosition(worldPos);
+			const worldPos = new Vector3();
+			Utils.getWorldPosition(this.object, worldPos);
 			npc.setPosition(worldPos.x, worldPos.y, worldPos.z);
 
 			const forward = Utils.getForward(this.object);
@@ -60,10 +63,10 @@ export class NPCSpawnPoint implements ISpawnPoint
 			world.add(npc);
 
 			// Name tag - userData.name from the marker if authored,
-			// otherwise auto-numbered NPC#1/NPC#2/… so the player can
+			// otherwise auto-numbered NPC#1/NPC#2/... so the player can
 			// still distinguish them.
-			const tag = (typeof this.object.userData.name === 'string' && this.object.userData.name.length > 0)
-				? this.object.userData.name
+			const tag = (typeof ud.name === 'string' && ud.name.length > 0)
+				? ud.name
 				: t('prompt.npcAnonymous', { n: String(anonymousNpcCounter++) });
 			attachNameLabel(npc, tag, false, { feature: 'Labels' });
 
@@ -101,18 +104,18 @@ export class NPCSpawnPoint implements ISpawnPoint
 				if (node !== null) npc.setBehaviour(new FollowPath(node, 5));
 				else console.error('NPC path node ' + this.firstAINode + ' not found.');
 			}
-			else if (this.object.userData.behaviour === 'random')
+			else if (ud.behaviour === 'random')
 			{
 				// Wander randomly - same Random AI swift502 v0.1+ used for
 				// the example "John" NPC.
 				npc.setBehaviour(new RandomBehaviour());
 			}
-			else if (this.object.userData.behaviour === 'follow')
+			else if (ud.behaviour === 'follow')
 			{
 				// Follow the player - swift502's FollowCharacter behaviour
 				// for the example "Bob" NPC. Resolved lazily on the first
 				// update tick because the player may spawn after this NPC.
-				const placeholder = new THREE.Object3D();
+				const placeholder = new TransformNode('followPlaceholder', world.scene);
 				const followBehaviour = new FollowTarget(placeholder, 2);
 				npc.setBehaviour(followBehaviour);
 				const tick = (): void =>

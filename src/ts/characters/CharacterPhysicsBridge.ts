@@ -1,58 +1,60 @@
-import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
+import { Matrix, PhysicsBody, Quaternion, Vector3 } from '@babylonjs/core';
+import type { IRaycastQuery } from '@babylonjs/core';
 
 import * as Utils from '../core/FunctionLibrary';
 import { CollisionGroups } from '../enums/CollisionGroups';
+import { PhysicsWorld } from '../physics/PhysicsWorld';
 import { Character } from './Character';
 
-// Cannon <-> Character glue for the physics tick. World.updatePhysics
+// Havok <-> Character glue for the physics tick. World.updatePhysics
 // calls character.physicsPreStep() and physicsPostStep() each step;
-// those methods on Character delegate here so the math + the cannon
+// those methods on Character delegate here so the math + the body
 // reads/writes sit in one file separate from the orchestration class.
+//
+// The capsule node is the body's transform node: writing its position
+// teleports the body before the next step, and the after-step sync
+// writes the simulated pose back - so `body position` below always
+// means `character.characterCapsule.node.position`.
 //
 // All three functions take Character as a parameter and only touch
 // public properties on it. Module-scoped scratches keep the hot path
 // allocation-free across all characters in the scene.
 
-const _simulatedVelocity = new THREE.Vector3();
-const _newVelocity = new THREE.Vector3();
-const _addThree = new THREE.Vector3();
-const _normal = new THREE.Vector3();
-const _q = new THREE.Quaternion();
-const _m = new THREE.Matrix4();
-const _pointVel = new CANNON.Vec3();
-const _addCannon = new CANNON.Vec3();
-const _Y_AXIS = new THREE.Vector3(0, 1, 0);
+const _simulatedVelocity = new Vector3();
+const _newVelocity = new Vector3();
+const _addThree = new Vector3();
+const _normal = new Vector3();
+const _q = new Quaternion();
+const _m = new Matrix();
+const _pointVel = new Vector3();
+const _Y_AXIS = new Vector3(0, 1, 0);
 // Reused per character per frame so feetRaycast doesn't allocate.
-// Cannon trimesh raycasts are expensive enough on their own without
-// GC pressure piled on top.
-const _rayStart = new CANNON.Vec3();
-const _rayEnd = new CANNON.Vec3();
-const _rayOpts = { collisionFilterMask: CollisionGroups.Default, skipBackfaces: true };
+const _rayStart = new Vector3();
+const _rayEnd = new Vector3();
+const _rayOpts: IRaycastQuery = { collideWith: CollisionGroups.Default };
 
-export function physicsPreStep(body: CANNON.Body, character: Character): void
+export function physicsPreStep(body: PhysicsBody, character: Character): void
 {
 	feetRaycast(character);
 
 	// Raycast debug - position the small box mesh on the ground hit
 	// or hanging below the body when nothing's underneath.
+	const bodyPos = character.characterCapsule.node.position;
 	if (character.rayHasHit)
 	{
-		if (character.raycastBox.visible)
+		if (character.raycastBox.isEnabled())
 		{
-			character.raycastBox.position.x = character.rayResult.hitPointWorld.x;
-			character.raycastBox.position.y = character.rayResult.hitPointWorld.y;
-			character.raycastBox.position.z = character.rayResult.hitPointWorld.z;
+			character.raycastBox.position.copyFrom(character.rayResult.hitPointWorld);
 		}
 	}
 	else
 	{
-		if (character.raycastBox.visible)
+		if (character.raycastBox.isEnabled())
 		{
 			character.raycastBox.position.set(
-				body.position.x,
-				body.position.y - character.rayCastLength - character.raySafeOffset,
-				body.position.z,
+				bodyPos.x,
+				bodyPos.y - character.rayCastLength - character.raySafeOffset,
+				bodyPos.z,
 			);
 		}
 	}
@@ -60,14 +62,18 @@ export function physicsPreStep(body: CANNON.Body, character: Character): void
 
 export function feetRaycast(character: Character): void
 {
-	const body = character.characterCapsule.body;
-	_rayStart.set(body.position.x, body.position.y, body.position.z);
-	_rayEnd.set(body.position.x, body.position.y - character.rayCastLength - character.raySafeOffset, body.position.z);
+	const capsule = character.characterCapsule;
+	const bodyPos = capsule.node.position;
+	_rayStart.set(bodyPos.x, bodyPos.y, bodyPos.z);
+	_rayEnd.set(bodyPos.x, bodyPos.y - character.rayCastLength - character.raySafeOffset, bodyPos.z);
+	_rayOpts.ignoreBody = capsule.body;
 	character.rayHasHit = character.world.physicsWorld.raycastClosest(_rayStart, _rayEnd, _rayOpts, character.rayResult);
 }
 
-export function physicsPostStep(body: CANNON.Body, character: Character): void
+export function physicsPostStep(body: PhysicsBody, character: Character): void
 {
+	const bodyPos = character.characterCapsule.node.position;
+
 	// Frozen by an open dialog - hold the body still. Without this the
 	// state machine's lerp toward velocityTarget=0 would still take a
 	// few frames to settle (and additive-mode states like Falling /
@@ -75,25 +81,23 @@ export function physicsPostStep(body: CANNON.Body, character: Character): void
 	// the character drift mid-conversation.
 	if (character.dialogFreeze)
 	{
-		body.velocity.x = 0;
-		body.velocity.y = 0;
-		body.velocity.z = 0;
+		PhysicsWorld.zeroVelocity(body);
 		return;
 	}
 
 	// Get velocities
-	_simulatedVelocity.set(body.velocity.x, body.velocity.y, body.velocity.z);
+	body.getLinearVelocityToRef(_simulatedVelocity);
 
 	// Take local velocity, then turn local into global. The helper
 	// allocates internally - leave that as the helper's contract;
 	// pulling it apart here would couple us to its math.
-	const arcadeLocal = _addThree.copy(character.velocity).multiplyScalar(character.moveSpeed);
+	const arcadeLocal = _addThree.copyFrom(character.velocity).scaleInPlace(character.moveSpeed);
 	const arcadeVelocity = Utils.appplyVectorMatrixXZ(character.orientation, arcadeLocal);
 
 	// Additive velocity mode
 	if (character.arcadeVelocityIsAdditive)
 	{
-		_newVelocity.copy(_simulatedVelocity);
+		_newVelocity.copyFrom(_simulatedVelocity);
 
 		const globalVelocityTarget = Utils.appplyVectorMatrixXZ(character.orientation, character.velocityTarget);
 		const addX = arcadeVelocity.x * character.arcadeVelocityInfluence.x;
@@ -107,9 +111,9 @@ export function physicsPostStep(body: CANNON.Body, character: Character): void
 	else
 	{
 		_newVelocity.set(
-			THREE.MathUtils.lerp(_simulatedVelocity.x, arcadeVelocity.x, character.arcadeVelocityInfluence.x),
-			THREE.MathUtils.lerp(_simulatedVelocity.y, arcadeVelocity.y, character.arcadeVelocityInfluence.y),
-			THREE.MathUtils.lerp(_simulatedVelocity.z, arcadeVelocity.z, character.arcadeVelocityInfluence.z),
+			Utils.lerp(_simulatedVelocity.x, arcadeVelocity.x, character.arcadeVelocityInfluence.x),
+			Utils.lerp(_simulatedVelocity.y, arcadeVelocity.y, character.arcadeVelocityInfluence.y),
+			Utils.lerp(_simulatedVelocity.z, arcadeVelocity.z, character.arcadeVelocityInfluence.z),
 		);
 	}
 
@@ -119,11 +123,11 @@ export function physicsPostStep(body: CANNON.Body, character: Character): void
 		// Flatten velocity
 		_newVelocity.y = 0;
 
-		// Move on top of moving objects. Inline the .add() instead of
-		// going through Utils.threeVector (which would allocate).
-		if (character.rayResult.body.mass > 0)
+		// Move on top of moving objects.
+		const groundBody = character.rayResult.body;
+		if (PhysicsWorld.isDynamic(groundBody))
 		{
-			character.rayResult.body.getVelocityAtWorldPoint(character.rayResult.hitPointWorld, _pointVel);
+			PhysicsWorld.velocityAtWorldPoint(groundBody, character.rayResult.hitPointWorld, _pointVel);
 			_newVelocity.x += _pointVel.x;
 			_newVelocity.y += _pointVel.y;
 			_newVelocity.z += _pointVel.z;
@@ -131,43 +135,39 @@ export function physicsPostStep(body: CANNON.Body, character: Character): void
 
 		// Measure the normal vector offset from direct "up" vector
 		// and transform it into a matrix.
-		_normal.set(character.rayResult.hitNormalWorld.x, character.rayResult.hitNormalWorld.y, character.rayResult.hitNormalWorld.z);
-		_q.setFromUnitVectors(_Y_AXIS, _normal);
-		_m.makeRotationFromQuaternion(_q);
+		_normal.copyFrom(character.rayResult.hitNormalWorld);
+		Quaternion.FromUnitVectorsToRef(_Y_AXIS, _normal, _q);
+		Matrix.FromQuaternionToRef(_q, _m);
 
 		// Rotate the velocity vector
-		_newVelocity.applyMatrix4(_m);
+		Vector3.TransformNormalToRef(_newVelocity, _m, _newVelocity);
 
 		// Apply velocity
-		body.velocity.x = _newVelocity.x;
-		body.velocity.y = _newVelocity.y;
-		body.velocity.z = _newVelocity.z;
+		body.setLinearVelocity(_newVelocity);
 		// Ground character
-		body.position.y = character.rayResult.hitPointWorld.y + character.rayCastLength + (_newVelocity.y / character.world.physicsFrameRate);
+		bodyPos.y = character.rayResult.hitPointWorld.y + character.rayCastLength + (_newVelocity.y / character.world.physicsFrameRate);
 	}
 	else
 	{
 		// If we're in air
-		body.velocity.x = _newVelocity.x;
-		body.velocity.y = _newVelocity.y;
-		body.velocity.z = _newVelocity.z;
+		body.setLinearVelocity(_newVelocity);
 
 		// Save last in-air information
-		character.groundImpactData.velocity.x = body.velocity.x;
-		character.groundImpactData.velocity.y = body.velocity.y;
-		character.groundImpactData.velocity.z = body.velocity.z;
+		character.groundImpactData.velocity.copyFrom(_newVelocity);
 	}
 
 	// Jumping
 	if (character.wantsToJump)
 	{
+		body.getLinearVelocityToRef(_newVelocity);
+
 		// If initJumpSpeed is set
 		if (character.initJumpSpeed > -1)
 		{
 			// Flatten velocity
-			body.velocity.y = 0;
+			_newVelocity.y = 0;
 			const speed = Math.max(character.velocitySimulator.position.length() * 4, character.initJumpSpeed);
-			body.velocity.set(
+			_newVelocity.set(
 				character.orientation.x * speed,
 				character.orientation.y * speed,
 				character.orientation.z * speed,
@@ -176,14 +176,15 @@ export function physicsPostStep(body: CANNON.Body, character: Character): void
 		else
 		{
 			// Moving objects compensation
-			character.rayResult.body.getVelocityAtWorldPoint(character.rayResult.hitPointWorld, _addCannon);
-			body.velocity.vsub(_addCannon, body.velocity);
+			PhysicsWorld.velocityAtWorldPoint(character.rayResult.body, character.rayResult.hitPointWorld, _pointVel);
+			_newVelocity.subtractInPlace(_pointVel);
 		}
 
 		// Add positive vertical velocity
-		body.velocity.y += 4;
+		_newVelocity.y += 4;
+		body.setLinearVelocity(_newVelocity);
 		// Move above ground by 2x safe offset value
-		body.position.y += character.raySafeOffset * 2;
+		bodyPos.y += character.raySafeOffset * 2;
 		// Reset flag
 		character.wantsToJump = false;
 	}

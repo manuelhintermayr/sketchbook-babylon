@@ -1,3 +1,5 @@
+import { Mesh, TransformNode } from '@babylonjs/core';
+
 import { ISpawnPoint } from '../../interfaces/ISpawnPoint';
 import { VehicleSpawnPoint } from '../spawn/VehicleSpawnPoint';
 import { CharacterSpawnPoint } from '../spawn/CharacterSpawnPoint';
@@ -7,7 +9,7 @@ import { World } from '../World';
 import { LoadingManager } from '../../core/LoadingManager';
 import { RaceContent } from '../RaceContent';
 import { t } from '../../i18n';
-import * as THREE from 'three';
+import * as Utils from '../../core/FunctionLibrary';
 
 // Scenarios whose lap counter runs off the curve-based RaceContent
 // system. Any scenario with a desc_title matching one of these and an
@@ -32,84 +34,88 @@ export class Scenario
 
 	public isRace: boolean = false;
 
-	public rootNode: THREE.Object3D;
+	public rootNode: TransformNode;
 	public spawnPoints: ISpawnPoint[] = [];
 	private invisible: boolean = false;
 	private initialCameraAngle: number;
 
 	private raceContent: RaceContent | undefined;
 
-	constructor(root: THREE.Object3D, world: World)
+	constructor(root: TransformNode, world: World)
 	{
 		this.rootNode = root;
 		this.world = world;
 		this.id = root.name;
 
+		const ud = Utils.userData(root);
+
 		// Scenario
-		if (root.userData.hasOwnProperty('name'))
+		if (ud.hasOwnProperty('name'))
 		{
-			this.name = root.userData.name;
+			this.name = ud.name;
 		}
-		if (root.userData.hasOwnProperty('default') && root.userData.default === 'true')
+		if (ud.hasOwnProperty('default') && ud.default === 'true')
 		{
 			this.default = true;
 		}
-		if (root.userData.hasOwnProperty('spawn_always') && root.userData.spawn_always === 'true')
+		if (ud.hasOwnProperty('spawn_always') && ud.spawn_always === 'true')
 		{
 			this.spawnAlways = true;
 		}
-		if (root.userData.hasOwnProperty('invisible') && root.userData.invisible === 'true')
+		if (ud.hasOwnProperty('invisible') && ud.invisible === 'true')
 		{
 			this.invisible = true;
 		}
-		if (root.userData.hasOwnProperty('desc_title'))
+		if (ud.hasOwnProperty('desc_title'))
 		{
-			this.descriptionTitle = root.userData.desc_title;
+			this.descriptionTitle = ud.desc_title;
 		}
-		if (root.userData.hasOwnProperty('desc_content'))
+		if (ud.hasOwnProperty('desc_content'))
 		{
-			this.descriptionContent = root.userData.desc_content;
+			this.descriptionContent = ud.desc_content;
 		}
-		if (root.userData.hasOwnProperty('camera_angle'))
+		if (ud.hasOwnProperty('camera_angle'))
 		{
-			this.initialCameraAngle = root.userData.camera_angle;
+			this.initialCameraAngle = ud.camera_angle;
 		}
 
 		if (!this.invisible) this.createLaunchLink();
 
 		// Find all scenario spawns and entities
-		root.traverse((child) => {
-			if (child.hasOwnProperty('userData') && child.userData.hasOwnProperty('data'))
+		Utils.traverse(root, (child) => {
+			if (!(child instanceof TransformNode)) return;
+			const cud = Utils.userData(child);
+			if (cud.hasOwnProperty('data'))
 			{
-				if (child.userData.data === 'spawn')
+				if (cud.data === 'spawn')
 				{
-					if (child.userData.type === 'car' || child.userData.type === 'airplane' || child.userData.type === 'heli' || child.userData.type === 'boat' || child.userData.type === 'rocketship')
+					if (cud.type === 'car' || cud.type === 'airplane' || cud.type === 'heli' || cud.type === 'boat' || cud.type === 'rocketship')
 					{
 						let sp = new VehicleSpawnPoint(child);
 
-						if (child.userData.hasOwnProperty('type'))
+						if (cud.hasOwnProperty('type'))
 						{
-							sp.type = child.userData.type;
+							sp.type = cud.type;
 						}
 
-						if (child.userData.hasOwnProperty('driver'))
+						if (cud.hasOwnProperty('driver'))
 						{
-							sp.driver = child.userData.driver;
+							sp.driver = cud.driver;
 
-							if (child.userData.driver === 'ai' && child.userData.hasOwnProperty('first_node'))
+							if (cud.driver === 'ai' && cud.hasOwnProperty('first_node'))
 							{
-								sp.firstAINode = child.userData.first_node;
+								sp.firstAINode = cud.first_node;
 							}
 						}
 
 						this.spawnPoints.push(sp);
 					}
-					else if (child.userData.type === 'player')
+					else if (cud.type === 'player')
 					{
 						let sp = new CharacterSpawnPoint(child);
 						this.spawnPoints.push(sp);
 					}
-					else if (child.userData.type === 'npc' || child.userData.type === 'character_ai' || child.userData.type === 'character_follow')
+					else if (cud.type === 'npc' || cud.type === 'character_ai' || cud.type === 'character_follow')
 					{
 						// socketControl uses character_ai (path-following) and
 						// character_follow (follows the player); we collapse
@@ -117,9 +123,9 @@ export class Scenario
 						// userData.first_node when present.
 						this.spawnPoints.push(new NPCSpawnPoint(child));
 					}
-					else if (child.userData.type === 'shape')
+					else if (cud.type === 'shape' && child instanceof Mesh)
 					{
-						const subtype = child.userData.subtype === 'sphere' ? 'sphere' : 'box';
+						const subtype = cud.subtype === 'sphere' ? 'sphere' : 'box';
 						this.spawnPoints.push(new ShapeSpawnPoint(child, subtype));
 					}
 				}
