@@ -15,7 +15,7 @@ import { AudioWorldContext } from './AudioHelpers';
 // Lifecycle inherited from ProceduralAudio: shouldPlay flips active,
 // buildSynth wires the graph the first time we start, teardownSynth
 // cleans up after a 200 ms gain ramp. The AudioContext is the shared
-// THREE.AudioContext singleton.
+// getAudioContext() singleton from SpatialAudio.
 const TRACKS = [
 	'audio/music/Concrete Spawn.mp3',
 	'audio/music/Just This Summer.mp3',

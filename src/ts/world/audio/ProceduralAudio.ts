@@ -1,23 +1,23 @@
-import * as THREE from 'three';
 import { IUpdatable } from '../../interfaces/IUpdatable';
 import { UpdateOrder } from '../../enums/UpdateOrder';
 import { AudioWorldContext, getMasterVolume } from './AudioHelpers';
+import { getAudioContext } from './SpatialAudio';
 
 // Base class for procedural Web Audio synthesisers (engine sound,
 // ambient soundscape, anything that builds an oscillator / filter
 // graph instead of playing a sample). Centralises the lifecycle that
 // EngineSound and AmbientSound used to duplicate:
 //
-//  - AudioContext acquisition via THREE.AudioContext.getContext() -
-//    a static shared instance reused by THREE.AudioListener +
-//    PositionalAudio. Browsers cap concurrent contexts at ~6, so
-//    sharing one across all procedural layers + every Speaker keeps
-//    us safely under the limit even when several vehicles spawn.
+//  - AudioContext acquisition via the shared getAudioContext() - one
+//    instance reused by AudioListener + PositionalAudio. Browsers cap
+//    concurrent contexts at ~6, so sharing one across all procedural
+//    layers + every Speaker keeps us safely under the limit even when
+//    several vehicles spawn.
 //  - Lazy start when shouldPlay() flips true; ramped stop when it
 //    flips false (gain ramp + delayed teardown so the cut isn't
 //    audible).
 //  - Per-frame Master_Volume sync from world.params (same slider
-//    that drives THREE.AudioListener for positional audio - single
+//    that drives the AudioListener for positional audio - single
 //    source of truth across every audio source).
 //  - Browser autoplay-policy resume each frame (cheap; the browser
 //    ignores resume() when the context is already running).
@@ -94,7 +94,7 @@ export abstract class ProceduralAudio implements IUpdatable
 
 	private startInternal(): void
 	{
-		const ctx = THREE.AudioContext.getContext() as AudioContext;
+		const ctx = getAudioContext();
 		const masterGain = ctx.createGain();
 		masterGain.gain.value = this.targetMasterVolume();
 		masterGain.connect(ctx.destination);

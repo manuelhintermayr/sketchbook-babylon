@@ -1,5 +1,7 @@
-import * as THREE from 'three';
+import { TransformNode } from '@babylonjs/core';
+
 import { AudioWorldContext, ensureAudioListener } from './AudioHelpers';
+import { PositionalAudio, getAudioContext } from './SpatialAudio';
 
 // Per-character positional sound effects. Same role for Characters that
 // EngineSound has for Vehicles: every character (player + NPCs) carries
@@ -11,9 +13,9 @@ import { AudioWorldContext, ensureAudioListener } from './AudioHelpers';
 //
 // Each play* method builds a tiny burst synth (noise / sine), routes
 // it through a permanent mixGain that's wired into a single
-// THREE.PositionalAudio attached to the parent. Browser GC reaps the
-// burst nodes once their `.stop()` time passes; the PositionalAudio +
-// mixGain stay alive for the character's lifetime.
+// PositionalAudio attached to the parent. Browser GC reaps the burst
+// nodes once their `.stop()` time passes; the PositionalAudio + mixGain
+// stay alive for the character's lifetime.
 
 const REF_DISTANCE = 4;
 const ROLLOFF = 1.5;
@@ -21,12 +23,12 @@ const MAX_DISTANCE = 35;
 
 export class CharacterSfx
 {
-	private readonly parent: THREE.Object3D;
+	private readonly parent: TransformNode;
 	private readonly world: AudioWorldContext;
-	private posAudio: THREE.PositionalAudio | null = null;
+	private posAudio: PositionalAudio | null = null;
 	private mixGain: GainNode | null = null;
 
-	constructor(parent: THREE.Object3D, world: AudioWorldContext)
+	constructor(parent: TransformNode, world: AudioWorldContext)
 	{
 		this.parent = parent;
 		this.world = world;
@@ -36,9 +38,7 @@ export class CharacterSfx
 	{
 		if (this.posAudio !== null)
 		{
-			this.parent.remove(this.posAudio);
-			try { this.posAudio.disconnect(); }
-			catch (_e) { /* already disconnected */ }
+			this.posAudio.disconnect();
 			this.posAudio = null;
 		}
 		this.mixGain = null;
@@ -53,18 +53,15 @@ export class CharacterSfx
 		if (this.posAudio === null)
 		{
 			const listener = ensureAudioListener(this.world);
-			const ctx = THREE.AudioContext.getContext() as AudioContext;
+			const ctx = getAudioContext();
 			this.mixGain = ctx.createGain();
 			this.mixGain.gain.value = 1;
-			this.posAudio = new THREE.PositionalAudio(listener);
+			this.posAudio = new PositionalAudio(listener);
 			this.posAudio.setRefDistance(REF_DISTANCE);
 			this.posAudio.setRolloffFactor(ROLLOFF);
 			this.posAudio.setMaxDistance(MAX_DISTANCE);
-			// three's setNodeSource type is narrowed to AudioScheduledSourceNode
-			// but accepts any AudioNode at runtime - it just calls
-			// audioNode.connect(this.gain). Cast through unknown.
-			this.posAudio.setNodeSource(this.mixGain as unknown as AudioScheduledSourceNode);
-			this.parent.add(this.posAudio);
+			this.posAudio.setNodeSource(this.mixGain);
+			this.posAudio.attachTo(this.parent);
 		}
 		if (this.mixGain!.context.state === 'suspended')
 		{

@@ -1,3 +1,5 @@
+import { Vector3 } from '@babylonjs/core';
+
 import { Vehicle } from '../../vehicles/Vehicle';
 import { ProceduralAudio } from './ProceduralAudio';
 import { AudioWorldContext } from './AudioHelpers';
@@ -43,6 +45,7 @@ interface EngineNodes
 	compressor: DynamicsCompressorNode;
 }
 
+const _engineVelocity = new Vector3();
 const IDLE_RPM = 800;
 const MAX_RPM = 6000;
 
@@ -165,7 +168,8 @@ export class EngineSound extends ProceduralAudio
 		// instead of propagating it into AudioParam.value, which throws
 		// 'The provided float value is non-finite.' and tears down the
 		// whole synth.
-		const v = this.vehicle.collision.velocity;
+		const v = _engineVelocity;
+		this.vehicle.collision.getLinearVelocityToRef(v);
 		const speedSq = v.x * v.x + v.z * v.z;
 		if (!Number.isFinite(speedSq)) return;
 

@@ -1,5 +1,6 @@
-import * as THREE from 'three';
+
 import { AudioWorldContext, getMasterVolume } from './AudioHelpers';
+import { getAudioContext } from './SpatialAudio';
 
 // Procedural sound-effects bus. Centralises every UI / player-action /
 // race / vehicle / environmental SFX so the rest of the codebase only
@@ -34,7 +35,7 @@ export class SfxBus
 		if (!this.world.params?.Sound_Effects) return false;
 		if (this.ctx === null)
 		{
-			this.ctx = THREE.AudioContext.getContext() as AudioContext;
+			this.ctx = getAudioContext();
 			this.masterGain = this.ctx.createGain();
 			this.masterGain.connect(this.ctx.destination);
 		}

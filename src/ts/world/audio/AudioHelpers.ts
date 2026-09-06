@@ -1,11 +1,13 @@
-import * as THREE from 'three';
+import { Camera } from '@babylonjs/core';
+
+import { AudioListener } from './SpatialAudio';
 
 // Cross-cutting helpers + the slim World contract every audio class
-// depends on. Audio modules used to import the full World class (~636
-// LOC) just to read params + camera; AudioWorldContext narrows that
-// to the handful of fields actually used. World still implements this
-// structurally - no changes there - but a stub or test fake can now
-// replace it without dragging in renderer / physics / scenarios.
+// depends on. Audio modules used to import the full World class just
+// to read params + camera; AudioWorldContext narrows that to the
+// handful of fields actually used. World still implements this
+// structurally - no changes there - but a stub or test fake can
+// replace it without dragging in engine / physics / scenarios.
 
 // 0..100 lil-gui slider params surfaced to audio. All optional so the
 // interface tolerates the partial-init phase before lil-gui has
@@ -22,10 +24,10 @@ export interface AudioParams
 export interface AudioWorldContext
 {
 	params: AudioParams;
-	camera: THREE.Camera;
+	camera: Camera;
 	// Lazily created on the first positional source. Mutable so
 	// ensureAudioListener can write the freshly-built listener back.
-	audioListener: THREE.AudioListener | null;
+	audioListener: AudioListener | null;
 	// Only null-checked (water-proximity gate in AmbientSound). The
 	// concrete Ocean class isn't part of the audio contract.
 	ocean: unknown;
@@ -42,18 +44,17 @@ export function getMasterVolume(world: AudioWorldContext): number
 	return (world.params?.Master_Volume ?? 80) / 100;
 }
 
-// Lazily create the world's AudioListener and attach it to the camera
-// the first time something positional is built. Honours both the
-// persisted Master_Volume and the Master_Audio mute flag so 3D-
-// positional sources start at the correct level (zero when muted)
-// without waiting for the next slider change.
-export function ensureAudioListener(world: AudioWorldContext): THREE.AudioListener
+// Lazily create the world's AudioListener the first time something
+// positional is built. World refreshes its pose from the camera every
+// frame. Honours both the persisted Master_Volume and the Master_Audio
+// mute flag so 3D-positional sources start at the correct level (zero
+// when muted) without waiting for the next slider change.
+export function ensureAudioListener(world: AudioWorldContext): AudioListener
 {
 	let listener = world.audioListener;
 	if (listener === null)
 	{
-		listener = new THREE.AudioListener();
-		world.camera.add(listener);
+		listener = new AudioListener();
 		world.audioListener = listener;
 		const muted = world.params?.Master_Audio === false;
 		const stored = world.params?.Master_Volume;

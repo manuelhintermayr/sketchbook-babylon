@@ -1,19 +1,21 @@
-import * as THREE from 'three';
+import { Color3, MeshBuilder, StandardMaterial, TransformNode } from '@babylonjs/core';
+
 import { World } from '../World';
 import { IWorldEntity } from '../../interfaces/IWorldEntity';
 import { EntityType } from '../../enums/EntityType';
 import { UpdateOrder } from '../../enums/UpdateOrder';
 import { createMediaAudioElement, ensureAudioListener } from './AudioHelpers';
+import { PositionalAudio } from './SpatialAudio';
 
 // 3D positional audio source, simplified port of tkkaushik369/socketControl's
 // Speaker. The original spawned an HTMLMesh with a play/pause checkbox;
 // this single-player port autoplays after the first user gesture and
-// relies on THREE.PositionalAudio for distance-attenuated playback.
+// relies on PositionalAudio for distance-attenuated playback.
 //
 // Map authoring: drop an Empty in world.glb with userData.data='speaker'
-// and userData.audio='<asset-path>'. World.loadScene picks it up and
-// spawns a yellow wireframe sphere with a looping audio source attached.
-export class Speaker extends THREE.Object3D implements IWorldEntity
+// and userData.audio='<asset-path>'. loadScene picks it up and spawns a
+// yellow wireframe sphere with a looping audio source attached.
+export class Speaker extends TransformNode implements IWorldEntity
 {
 	public entityType: EntityType = EntityType.Speaker;
 	public updateOrder: number = UpdateOrder.Audio;
@@ -22,7 +24,7 @@ export class Speaker extends THREE.Object3D implements IWorldEntity
 	{
 		dom: HTMLAudioElement | null;
 		source: HTMLSourceElement | null;
-		posaudio: THREE.PositionalAudio | null;
+		posaudio: PositionalAudio | null;
 	};
 
 	private static gestureBound = false;
@@ -30,16 +32,18 @@ export class Speaker extends THREE.Object3D implements IWorldEntity
 
 	constructor(audioUrl: string, world: World)
 	{
-		super();
+		super('speaker', world.scene);
 
 		this.audio = { dom: null, source: null, posaudio: null };
 
-		const mesh = new THREE.Mesh(
-			new THREE.SphereGeometry(0.5, 8, 4),
-			new THREE.MeshPhongMaterial({ color: 0xffff00, wireframe: true }),
-		);
+		const mesh = MeshBuilder.CreateSphere('speakerMesh', { diameter: 1, segments: 4 }, world.scene);
+		const mat = new StandardMaterial('speakerMaterial', world.scene);
+		mat.wireframe = true;
+		mat.disableLighting = true;
+		mat.emissiveColor = new Color3(1, 1, 0);
+		mesh.material = mat;
 		mesh.position.set(0, 1, 0);
-		this.add(mesh);
+		mesh.parent = this;
 
 		this.attachAudio(audioUrl, world);
 	}
@@ -49,11 +53,11 @@ export class Speaker extends THREE.Object3D implements IWorldEntity
 		const listener = ensureAudioListener(world);
 		const { dom: audioDom, source: sourceDom } = createMediaAudioElement(audioUrl);
 
-		const posAudio = new THREE.PositionalAudio(listener);
+		const posAudio = new PositionalAudio(listener);
 		posAudio.setMediaElementSource(audioDom);
 		posAudio.setRefDistance(2);
 		posAudio.setRolloffFactor(1.5);
-		this.add(posAudio);
+		posAudio.attachTo(this);
 
 		this.audio = { dom: audioDom, source: sourceDom, posaudio: posAudio };
 
@@ -86,12 +90,11 @@ export class Speaker extends THREE.Object3D implements IWorldEntity
 
 	public addToWorld(world: World): void
 	{
-		world.graphicsWorld.add(this);
+		world.addNode(this);
 	}
 
 	public removeFromWorld(world: World): void
 	{
-		world.graphicsWorld.remove(this);
 		if (this.audio.dom)
 		{
 			// Drop the dom element from the gesture-pending queue too -
@@ -104,6 +107,8 @@ export class Speaker extends THREE.Object3D implements IWorldEntity
 			this.audio.dom.pause();
 			this.audio.dom.remove();
 		}
+		this.audio.posaudio?.disconnect();
+		world.removeNode(this);
 	}
 
 	public update(_timeStep: number): void { }

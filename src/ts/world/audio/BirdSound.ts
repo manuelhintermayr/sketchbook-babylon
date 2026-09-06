@@ -1,9 +1,11 @@
-import * as THREE from 'three';
+import { TransformNode } from '@babylonjs/core';
+
 import { AudioWorldContext, ensureAudioListener } from './AudioHelpers';
+import { PositionalAudio, getAudioContext } from './SpatialAudio';
 
 // Per-bird positional chirp synth. Same FM-bird timbre that used to
-// live globally in AmbientSound; here it sits on a THREE.PositionalAudio
-// attached to the bird's group so chirps fade with distance and pan
+// live globally in AmbientSound; here it sits on a PositionalAudio
+// attached to the bird's node so chirps fade with distance and pan
 // from the bird's actual location.
 //
 // Lifecycle is gated on params.Sound_Effects: started lazily on first
@@ -33,14 +35,14 @@ interface BirdNodes
 
 export class BirdSound
 {
-	private readonly parent: THREE.Object3D;
+	private readonly parent: TransformNode;
 	private readonly world: AudioWorldContext;
-	private positionalAudio: THREE.PositionalAudio | null = null;
+	private positionalAudio: PositionalAudio | null = null;
 	private nodes: BirdNodes | null = null;
 	private chirpTimeout: ReturnType<typeof setTimeout> | undefined;
 	private active: boolean = false;
 
-	constructor(parent: THREE.Object3D, world: AudioWorldContext)
+	constructor(parent: TransformNode, world: AudioWorldContext)
 	{
 		this.parent = parent;
 		this.world = world;
@@ -71,7 +73,7 @@ export class BirdSound
 	private start(): void
 	{
 		const listener = ensureAudioListener(this.world);
-		const ctx = THREE.AudioContext.getContext() as AudioContext;
+		const ctx = getAudioContext();
 
 		const carrier = ctx.createOscillator();
 		carrier.type = 'sine';
@@ -97,16 +99,12 @@ export class BirdSound
 		carrier.connect(filter);
 		filter.connect(gain);
 
-		const posAudio = new THREE.PositionalAudio(listener);
+		const posAudio = new PositionalAudio(listener);
 		posAudio.setRefDistance(REF_DISTANCE);
 		posAudio.setRolloffFactor(ROLLOFF);
 		posAudio.setMaxDistance(MAX_DISTANCE);
-		// three's setNodeSource type is narrowed to AudioScheduledSourceNode
-		// in @types/three but the runtime accepts any AudioNode (it just
-		// calls audioNode.connect(this.gain)). Cast through unknown so we
-		// can feed the end of our filter chain directly.
-		posAudio.setNodeSource(gain as unknown as AudioScheduledSourceNode);
-		this.parent.add(posAudio);
+		posAudio.setNodeSource(gain);
+		posAudio.attachTo(this.parent);
 
 		carrier.start();
 		modulator.start();
@@ -135,9 +133,7 @@ export class BirdSound
 
 		if (this.positionalAudio !== null)
 		{
-			this.parent.remove(this.positionalAudio);
-			try { this.positionalAudio.disconnect(); }
-			catch (_e) { /* already disconnected */ }
+			this.positionalAudio.disconnect();
 			this.positionalAudio = null;
 		}
 	}

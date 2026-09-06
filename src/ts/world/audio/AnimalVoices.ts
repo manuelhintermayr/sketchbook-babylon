@@ -1,6 +1,7 @@
-import * as THREE from 'three';
+import { Axis, Vector3 } from '@babylonjs/core';
 
 import { AudioWorldContext, getMasterVolume } from './AudioHelpers';
+import { getAudioContext } from './SpatialAudio';
 
 // Procedural play-once meow / bark / purr synthesis. One global
 // AnimalVoiceBus that owns the AudioContext + master gain (so
@@ -18,7 +19,8 @@ import { AudioWorldContext, getMasterVolume } from './AudioHelpers';
 
 export type VoiceKind = 'meow' | 'bark' | 'purr';
 
-const _scratch = new THREE.Vector3();
+const _scratch = new Vector3();
+const _right = new Vector3();
 
 export class AnimalVoiceBus
 {
@@ -32,7 +34,7 @@ export class AnimalVoiceBus
 		this.world = world;
 	}
 
-	// Ensure the shared THREE AudioContext exists and our master gain
+	// Ensure the shared AudioContext exists and our master gain
 	// is wired up. Lazy so we don't poke the autoplay-policy before
 	// the title-screen click goes through.
 	private ensureContext(): boolean
@@ -40,7 +42,7 @@ export class AnimalVoiceBus
 		if (this.ctx !== null) return true;
 		try
 		{
-			const ctx = THREE.AudioContext.getContext() as AudioContext;
+			const ctx = getAudioContext();
 			const master = ctx.createGain();
 			master.gain.value = this.masterGain();
 			master.connect(ctx.destination);
@@ -73,7 +75,7 @@ export class AnimalVoiceBus
 
 	// Trigger a single one-shot voice at the animal's world position.
 	// Returns the duration so callers can sync mouth animation.
-	public play(kind: VoiceKind, position: THREE.Vector3): number
+	public play(kind: VoiceKind, position: Vector3): number
 	{
 		if (!this.ensureContext()) return 0;
 		const ctx = this.ctx!;
@@ -87,52 +89,46 @@ export class AnimalVoiceBus
 		}
 	}
 
-	private buildPanner(ctx: AudioContext, position: THREE.Vector3): StereoPannerNode
+	private buildPanner(ctx: AudioContext, position: Vector3): StereoPannerNode
 	{
 		const panner = ctx.createStereoPanner();
 		panner.pan.value = this.panFor(position);
 		return panner;
 	}
 
-	private panFor(position: THREE.Vector3): number
+	private panFor(position: Vector3): number
 	{
 		// Pan -1..+1 from the animal's offset along the camera's right
 		// axis. Cheap proxy for stereo position - no proper HRTF.
 		const cam = this.world.camera;
 		if (cam === undefined) return 0;
-		_scratch.copy(position).sub(cam.position);
-		// Camera's local right = (1, 0, 0) in world after applying
-		// world matrix's rotation. Three's MatrixWorld doesn't trivially
-		// give us that, so fall back to a yaw-only approximation.
+		position.subtractToRef(cam.position, _scratch);
 		const dx = _scratch.x;
 		const dz = _scratch.z;
 		const dist = Math.sqrt(dx * dx + dz * dz);
 		if (dist < 0.001) return 0;
-		// project onto camera's right axis. We need cam yaw; quaternion
-		// y-component approximates it for typical near-horizon shots.
-		const yaw = Math.atan2(
-			2 * (cam.quaternion.w * cam.quaternion.y),
-			1 - 2 * (cam.quaternion.y * cam.quaternion.y),
-		);
-		const right = Math.cos(yaw) * dx - Math.sin(yaw) * dz;
+		// Project onto the camera's right axis (its local +X in world
+		// space), flattened to the ground plane.
+		cam.getDirectionToRef(Axis.X, _right);
+		const right = _right.x * dx + _right.z * dz;
 		const pan = Math.max(-1, Math.min(1, right / dist));
 		return pan;
 	}
 
-	private distanceGain(position: THREE.Vector3): number
+	private distanceGain(position: Vector3): number
 	{
 		// 1 m -> 1.0, 30 m -> 0.0. Linear falloff, plenty for a small
 		// world. Past 30 m the sound is silent and gets disposed.
 		const cam = this.world.camera;
 		if (cam === undefined) return 1;
-		const d = position.distanceTo(cam.position);
+		const d = Vector3.Distance(position, cam.position);
 		return Math.max(0, 1 - (d - 1) / 29);
 	}
 
 	// ── meow ───────────────────────────────────────────────────────
 	// Two-formant rising-then-falling glide on a sawtooth carrier
 	// shaped through a bandpass filter. ~600 ms total.
-	private playMeow(ctx: AudioContext, master: GainNode, position: THREE.Vector3): number
+	private playMeow(ctx: AudioContext, master: GainNode, position: Vector3): number
 	{
 		const distGain = this.distanceGain(position);
 		if (distGain <= 0) return 0;
@@ -182,7 +178,7 @@ export class AnimalVoiceBus
 	// ── bark ───────────────────────────────────────────────────────
 	// Two short "woof"-shaped pulses. Each pulse is a square wave
 	// dropping pitch ~30 Hz over 80 ms, lowpass-filtered to round it.
-	private playBark(ctx: AudioContext, master: GainNode, position: THREE.Vector3): number
+	private playBark(ctx: AudioContext, master: GainNode, position: Vector3): number
 	{
 		const distGain = this.distanceGain(position);
 		if (distGain <= 0) return 0;
@@ -244,7 +240,7 @@ export class AnimalVoiceBus
 	// Looped low-frequency sawtooth amplitude-modulated by an LFO at
 	// ~25 Hz. Lives until stopPurr() is called by the caller, with
 	// distance-based gain ducking on tickDistance() each frame.
-	private playPurr(ctx: AudioContext, master: GainNode, position: THREE.Vector3): number
+	private playPurr(ctx: AudioContext, master: GainNode, position: Vector3): number
 	{
 		// playPurr is a one-shot trigger here for symmetry; the
 		// looped variant is startPurrLoop below. Most callers want
@@ -306,7 +302,7 @@ export class AnimalVoiceBus
 	// Looped purr for tame cats sitting near the player. Identified
 	// by a stable id (e.g. animal index) so the manager can stop the
 	// right one when the cat moves out of range or the toggle flips.
-	public startPurrLoop(id: string, position: THREE.Vector3): void
+	public startPurrLoop(id: string, position: Vector3): void
 	{
 		if (this.purrLoops.has(id)) return;
 		if (!this.ensureContext()) return;
@@ -335,12 +331,12 @@ class PurrLoop
 {
 	private ctx: AudioContext;
 	private world: AudioWorldContext;
-	private position: THREE.Vector3;
+	private position: Vector3;
 	private osc: OscillatorNode;
 	private lfo: OscillatorNode;
 	private env: GainNode;
 
-	constructor(ctx: AudioContext, master: GainNode, world: AudioWorldContext, position: THREE.Vector3)
+	constructor(ctx: AudioContext, master: GainNode, world: AudioWorldContext, position: Vector3)
 	{
 		this.ctx = ctx;
 		this.world = world;
@@ -405,7 +401,7 @@ class PurrLoop
 	{
 		const cam = this.world.camera;
 		if (cam === undefined) return 1;
-		const d = this.position.distanceTo(cam.position);
+		const d = Vector3.Distance(this.position, cam.position);
 		return Math.max(0, 1 - (d - 1) / 14);  // tighter than one-shots
 	}
 }
