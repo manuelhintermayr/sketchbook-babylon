@@ -1,76 +1,68 @@
-import * as THREE from 'three';
-import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
+import { Scene, StandardMaterial, Texture, TransformNode } from '@babylonjs/core';
 
-// Shared FBX + texture loader for the swift502 credits sign that
-// both v0.1 and v0.2 demos use. The FBX was authored as a
-// 4-sub-mesh group (sign / grass / sign_shadow / credits); each
-// sub-mesh gets its own textured Lambert material. The 1.7x clone
-// in both demos uses the larger credits.png + insets the sign and
-// credits panels along local Z by 0.2 to keep them visually flush.
+import { LoadedModel, loadModel } from '../../core/LoadingManager';
+import * as Utils from '../../core/FunctionLibrary';
+
+// Shared loader for the swift502 credits sign that both v0.1 and v0.2
+// demos use. The original FBX (kept next to the GLB) was converted to
+// glTF for the Babylon loader; it's a 4-sub-mesh group (sign / grass /
+// sign_shadow / credits) and each sub-mesh gets its own textured
+// lambert-style material. The 1.7x clone in both demos uses the
+// larger credits.png + insets the sign and credits panels along local
+// Z by 0.2 to keep them visually flush.
 
 export const SIGN_DIR = 'build/assets/credits_sign/';
 
-export function loadSignFbx(): Promise<THREE.Group>
+export function loadSign(scene: Scene): Promise<LoadedModel>
 {
-	return new Promise((resolve, reject) =>
-	{
-		new FBXLoader().load(
-			SIGN_DIR + 'sign.fbx',
-			(group) => resolve(group),
-			undefined,
-			(err) => reject(err),
-		);
-	});
+	return loadModel(scene, SIGN_DIR + 'sign.glb');
 }
 
-export function applySignMaterials(root: THREE.Object3D, bigCredits: boolean): void
+export function applySignMaterials(scene: Scene, root: TransformNode, bigCredits: boolean): void
 {
-	const tex = (file: string): THREE.Texture =>
+	// glTF UVs start top-left, so the textures load un-flipped - same
+	// convention the glTF loader itself uses.
+	const textured = (file: string, transparent: boolean): StandardMaterial =>
 	{
-		const t = new THREE.TextureLoader().load(SIGN_DIR + file);
-		t.colorSpace = THREE.SRGBColorSpace;
-		return t;
+		const material = new StandardMaterial(file, scene);
+		const texture: Texture = Utils.loadTexture(scene, SIGN_DIR + file, false);
+		material.diffuseTexture = texture;
+		material.specularColor.set(0, 0, 0);
+		if (transparent)
+		{
+			texture.hasAlpha = true;
+			material.useAlphaFromDiffuseTexture = true;
+		}
+		return material;
 	};
 
-	root.traverse((child) =>
+	for (const mesh of root.getChildMeshes(false))
 	{
-		const mesh = child as THREE.Mesh;
-		if ((mesh as any).isMesh)
-		{
-			mesh.castShadow = true;
-			mesh.receiveShadow = true;
-		}
-		switch (child.name)
+		mesh.receiveShadows = true;
+		switch (mesh.name)
 		{
 			case 'grass':
-				mesh.material = new THREE.MeshLambertMaterial({
-					map: tex('grass.png'),
-					transparent: true,
-					depthWrite: false,
-					side: THREE.DoubleSide,
-				});
-				mesh.castShadow = false;
+			{
+				const material = textured('grass.png', true);
+				material.disableDepthWrite = true;
+				material.backFaceCulling = false;
+				mesh.material = material;
 				break;
+			}
 			case 'sign':
-				mesh.material = new THREE.MeshLambertMaterial({
-					map: tex('sign.png'),
-				});
-				if (bigCredits) mesh.translateZ(-0.2);
+				mesh.material = textured('sign.png', false);
+				if (bigCredits) mesh.position.z -= 0.2;
 				break;
 			case 'sign_shadow':
-				mesh.material = new THREE.MeshLambertMaterial({
-					map: tex('sign_shadow.png'),
-					transparent: true,
-				});
-				mesh.renderOrder = -1;
+				mesh.material = textured('sign_shadow.png', true);
+				// Drawn first among the transparent meshes, like
+				// renderOrder = -1 did.
+				mesh.alphaIndex = -1;
 				break;
 			case 'credits':
-				mesh.material = new THREE.MeshLambertMaterial({
-					map: tex(bigCredits ? 'credits.png' : 'credits2.png'),
-					transparent: true,
-				});
-				if (bigCredits) mesh.translateZ(-0.2);
+				mesh.material = textured(bigCredits ? 'credits.png' : 'credits2.png', true);
+				if (bigCredits) mesh.position.z -= 0.2;
 				break;
 		}
-	});
+	}
 }
