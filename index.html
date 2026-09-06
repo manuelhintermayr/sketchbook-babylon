@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="sketchbook">
+
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+	<title>Sketchbook</title>
+	<link rel="icon" href="favicon.ico">
+</head>
+
+<body>
+	<script src="build/sketchbook.min.js"></script>
+	<script>
+		(function () {
+			// Catch runtime errors as early as possible so even bootstrap
+			// failures get a friendly card instead of a silent crash.
+			Sketchbook.installErrorOverlay();
+
+			// Map registry: GLB paths get loaded via GLTFLoader, class
+			// names get instantiated as BaseScene subclasses (procedural
+			// sandboxes ported from socketControl).
+			const glbPaths = {
+				'inthenew': 'build/assets/world.glb',
+				'sc-v03':   'build/assets/world_sc_v03.glb',
+				'sc-v04':   'build/assets/world_sc_v04.glb',
+			};
+			const sceneClasses = {
+				'sw-v01':     Sketchbook.Sw01Scene,
+				'sw-v02':     Sketchbook.Sw02Scene,
+				'sc-test':    Sketchbook.TestScene,
+				'sc-test2':   Sketchbook.Test2Scene,
+				'sc-test3':   Sketchbook.Test3Scene,
+				'sc-example': Sketchbook.Example,
+			};
+			const choice = localStorage.getItem('sketchbook.map') || 'inthenew';
+
+			// Title screen first - both for the pre-game vibe and to
+			// produce a user gesture before audio autoplay is requested.
+			Sketchbook.showTitleScreen({
+				title: 'Sketchbook',
+				version: 'Version 0.8.0',
+				prompt: 'Click or press any key to start',
+			}).then(async () => {
+				if (sceneClasses[choice]) {
+					const SceneClass = sceneClasses[choice];
+					// Sandboxes that need async asset loading expose a
+					// static `createAsync()` factory; the others are
+					// constructed synchronously.
+					const instance = typeof SceneClass.createAsync === 'function'
+						? await SceneClass.createAsync()
+						: new SceneClass();
+					new Sketchbook.World(instance);
+				} else {
+					new Sketchbook.World(glbPaths[choice] || glbPaths['inthenew']);
+				}
+			});
+		})();
+	</script>
+	<script src="vendor/joycon/Joycon.min.js"></script>
+	<script src="vendor/joycon/Client.js"></script>
+	<script src="vendor/joycon/joycon-sketchbook.js"></script>
+
+	<audio class="horn-sfx" preload="auto" style="display: none;"><source src="audio/horn.wav" type="audio/wav"></audio>
+</body>
+
+</html>

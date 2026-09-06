@@ -1,0 +1,48 @@
+/* SweetAlert + welcome-modal overrides. Confirm button is the gold
+ * keycap-style press button - the signature interaction surface. */
+
+.swal2-container
+{
+	text-shadow: none;
+}
+
+.swal2-confirm
+{
+	display: inline-block;
+	background: var(--color-primary);
+	border: none;
+	padding: var(--space-3) var(--space-8);
+	color: var(--color-on-primary);
+	outline: none;
+	border-radius: var(--radius-md);
+	font-family: var(--font-body);
+	font-weight: var(--weight-bold);
+	font-size: var(--text-body-lg);
+	cursor: pointer;
+	margin: 0 0 4px 0;
+	box-shadow: var(--shadow-gold);
+	transition: background var(--motion-fast) var(--ease-default);
+}
+
+.swal2-confirm:active
+{
+	margin: 4px 0 0 0;
+	box-shadow: 0 0px 0 0 var(--color-primary-shadow);
+}
+
+div.swal2-footer
+{
+	justify-content: space-evenly;
+}
+
+.button
+{
+	opacity: 0;
+	background: black;
+	padding: var(--space-3) var(--space-4);
+	font-family: var(--font-mono);
+	font-size: 1.2rem;
+	border: none;
+	color: white;
+	cursor: pointer;
+}

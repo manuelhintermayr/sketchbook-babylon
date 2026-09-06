@@ -1,0 +1,155 @@
+/* Mobile + tablet overrides. Imported last from main.css so these
+ * rules win against the per-component defaults. Two breakpoints:
+ *
+ *   --bp-tablet:  768px  ← phones in landscape, narrow tablets
+ *   --bp-mobile:  480px  ← phones in portrait
+ *
+ * Without these the lil-gui debug panel hogs the right edge of every
+ * screen and the controls overlay text is unreadable on a 5-inch
+ * phone (the 3D canvas itself is fine - it just fills whatever
+ * pixels it gets).
+ */
+
+/* ───────── Tablet and below (≤ 768px) ───────── */
+@media (max-width: 768px)
+{
+	/* lil-gui: hide on touch-first devices. It's a desktop debug
+	 * panel - long property names and tiny number sliders that don't
+	 * survive being squeezed into a phone width. The SettingsModal
+	 * (Pause → Settings) covers everything a player actually needs. */
+	.lil-gui.lil-root
+	{
+		display: none !important;
+	}
+
+	/* Stats box: hide alongside lil-gui. The Debug_FPS toggle still
+	 * lives in the Settings modal but the on-screen panel itself is
+	 * desktop-only - three side-by-side canvases don't survive the
+	 * narrow viewport even when scaled. */
+	#statsBox,
+	#debug-stack
+	{
+		display: none !important;
+	}
+
+	/* Controls overlay (Z-key toggle list): tighten and shrink.
+	 * The overlay is helpful but not essential - it should hint, not
+	 * block the canvas. */
+	.left-panel .panel-segment
+	{
+		padding: var(--space-3);
+		font-size: var(--text-body-sm);
+	}
+
+	.ctrl-key
+	{
+		padding: 1px 4px;
+		font-size: var(--text-caption);
+	}
+
+	/* Settings modal: card padding gets smaller, audio sliders narrower. */
+	#settings-modal .settings-container
+	{
+		padding: var(--space-4);
+	}
+
+	#settings-modal .settings-card
+	{
+		padding: var(--space-4);
+	}
+
+	#settings-modal input[type="range"]
+	{
+		width: 110px;
+	}
+
+	/* Pause menu buttons stack vertically by default; only ensure the
+	 * card itself doesn't overflow the small viewport. */
+	#pause-menu .pause-card
+	{
+		max-width: 92vw;
+	}
+
+	/* Dialog box: take more of the viewport on phones, smaller portrait. */
+	#dialog-bar
+	{
+		left: var(--space-3);
+		right: var(--space-3);
+	}
+
+	/* Title-text scaling lives in titleScreen.css via clamp() so it
+	 * tracks viewport width fluidly without breakpoints. The prompt
+	 * row gets a smaller body size here. */
+	#title-screen .title-prompt
+	{
+		font-size: var(--text-body-sm);
+	}
+}
+
+/* ───────── Phone portrait (≤ 480px) ───────── */
+@media (max-width: 480px)
+{
+	/* Hide the desktop controls overlay completely on small phones -
+	 * the touch-controls overlay (joystick + jump/F/run buttons) is
+	 * the actually-used input layer there. */
+	.left-panel
+	{
+		display: none;
+	}
+
+	/* Touch joystick: smaller so there's more visible canvas. */
+	#touch-joystick-base
+	{
+		width: 110px;
+		height: 110px;
+	}
+
+	#touch-joystick-thumb
+	{
+		width: 50px;
+		height: 50px;
+	}
+
+}
+
+/* ───────── Touch-pointer hints (any viewport, touch-first device) ─────────
+ * Fine-pointer inputs (mouse, trackpad) keep the lil-gui visible even on
+ * smaller windows. Coarse-pointer (touch) hides it regardless of width.
+ */
+@media (pointer: coarse)
+{
+	.lil-gui.lil-root
+	{
+		display: none !important;
+	}
+}
+
+/* Touch session - TouchControls.ts toggles `touch-active` on <html>:
+ * on for real touch pointerdown, off again the moment the player goes
+ * back to mouse / keyboard. While it's on, the lil-gui debug panel and
+ * the keyboard-controls overlay both go away - they're noise for a
+ * touch player and the on-screen overlay covers the same ground.
+ */
+html.touch-active .lil-gui.lil-root,
+html.touch-active .left-panel,
+html.touch-active #debug-stack
+{
+	display: none !important;
+}
+
+/* Belt-and-braces fallback: any element starting with `.lil-gui` (the
+ * library prefixes every internal class with that). lil-gui sets some
+ * sizing inline so we keep `!important` to win over those.
+ */
+@media (max-width: 768px), (pointer: coarse)
+{
+	.lil-gui
+	{
+		display: none !important;
+	}
+}
+
+html.touch-active .lil-gui
+{
+	display: none !important;
+}

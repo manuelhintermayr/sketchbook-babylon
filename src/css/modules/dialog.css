@@ -1,0 +1,312 @@
+/* NPC dialog bar - bottom-anchored card with portrait left, speaker
+ * name + body text + numbered choices on the right.
+ *
+ * While a dialog is open (DialogBox toggles `html.dialog-active`),
+ * every other on-screen interaction surface is hidden: the keyboard
+ * controls overlay, the lil-gui debug stack + FPS box, and any other
+ * ProximityPrompt label. The dialog owns the screen until the player
+ * picks a choice.
+ */
+html.dialog-active .left-panel,
+html.dialog-active #debug-stack,
+html.dialog-active .lil-gui.lil-root,
+html.dialog-active .proximity-prompt
+{
+	display: none !important;
+}
+
+#dialog-bar
+{
+	position: fixed;
+	bottom: 0;
+	left: 0;
+	right: 0;
+	padding: 0 var(--space-8) var(--space-6);
+	display: none;
+	z-index: var(--z-overlay);
+	pointer-events: none;
+}
+
+#dialog-bar.visible
+{
+	display: block;
+	pointer-events: auto;
+}
+
+#dialog-bar .dialog-dim
+{
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.22);
+	pointer-events: none;
+	z-index: -1;
+}
+
+#dialog-bar .dialog-box
+{
+	background: var(--color-overlay-bg);
+	border: 2px solid rgba(255, 185, 0, 0.45);
+	border-radius: var(--radius-xl);
+	-webkit-backdrop-filter: blur(10px);
+	backdrop-filter: blur(10px);
+	display: flex;
+	min-height: 170px;
+	overflow: hidden;
+	box-shadow: 0 -4px 30px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 185, 0, 0.12);
+	max-width: 1100px;
+	margin: 0 auto;
+}
+
+#dialog-bar .dialog-portrait
+{
+	width: 148px;
+	flex-shrink: 0;
+	background: rgba(255, 185, 0, 0.06);
+	border-right: 2px solid rgba(255, 185, 0, 0.25);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	padding: var(--space-4) var(--space-3);
+	gap: var(--space-2);
+}
+
+#dialog-bar .portrait-img
+{
+	width: 88px;
+	height: 88px;
+	background: linear-gradient(135deg, var(--color-tertiary) 0%, #3a7090 100%);
+	border-radius: var(--radius-full);
+	border: 3px solid rgba(255, 185, 0, 0.55);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-shadow: 0 0 22px rgba(255, 185, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.4);
+	color: #ffffff;
+	font-family: var(--font-headline);
+	font-weight: var(--weight-bold);
+	font-size: var(--text-h2);
+	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+#dialog-bar .portrait-name
+{
+	font-family: var(--font-label);
+	font-weight: var(--weight-bold);
+	font-size: var(--text-body-sm);
+	color: var(--color-primary);
+	text-align: center;
+	letter-spacing: var(--tracking-wide);
+}
+
+#dialog-bar .portrait-role
+{
+	font-family: var(--font-label);
+	font-size: var(--text-caption);
+	color: var(--color-overlay-text-soft);
+	text-align: center;
+}
+
+#dialog-bar .dialog-content
+{
+	flex: 1;
+	padding: var(--space-4) var(--space-6);
+	display: flex;
+	flex-direction: column;
+}
+
+#dialog-bar .dialog-speaker
+{
+	font-family: var(--font-headline);
+	font-weight: var(--weight-bold);
+	font-size: var(--text-h4);
+	color: var(--color-primary);
+	margin-bottom: var(--space-2);
+	padding-bottom: var(--space-2);
+	border-bottom: 1px solid rgba(255, 185, 0, 0.2);
+}
+
+#dialog-bar .dialog-text
+{
+	font-family: var(--font-body);
+	font-size: var(--text-body);
+	color: var(--color-overlay-text);
+	line-height: var(--leading-relaxed);
+	flex: 1;
+	margin-bottom: var(--space-3);
+	text-shadow: none;
+}
+
+#dialog-bar .dialog-choices
+{
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-2);
+	margin-top: var(--space-2);
+}
+
+#dialog-bar .dialog-choice
+{
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	padding: var(--space-2) var(--space-3);
+	background: var(--color-overlay-choice-bg);
+	border: 1px solid var(--color-overlay-choice-border);
+	border-radius: var(--radius-md);
+	color: var(--color-overlay-text);
+	font-family: var(--font-body);
+	font-size: var(--text-body-sm);
+	cursor: pointer;
+	transition: background var(--motion-fast) var(--ease-default), border-color var(--motion-fast) var(--ease-default);
+	user-select: none;
+	text-align: left;
+}
+
+#dialog-bar .dialog-choice:hover,
+#dialog-bar .dialog-choice.selected,
+#dialog-bar .dialog-choice:focus-visible
+{
+	background: var(--color-overlay-choice-bg-hover);
+	border-color: rgba(255, 185, 0, 0.45);
+	color: var(--color-overlay-text);
+	outline: none;
+}
+
+#dialog-bar .dialog-key
+{
+	display: inline-block;
+	min-width: 1.4em;
+	text-align: center;
+	font-family: var(--font-mono);
+	font-weight: var(--weight-bold);
+	font-size: var(--text-caption);
+	background: rgba(255, 185, 0, 0.18);
+	border: 1px solid rgba(255, 185, 0, 0.35);
+	color: var(--color-primary);
+	padding: 1px 6px;
+	border-radius: var(--radius-sm);
+	flex-shrink: 0;
+}
+
+#dialog-bar .dialog-hint
+{
+	font-family: var(--font-label);
+	font-size: var(--text-caption);
+	color: rgba(255, 255, 255, 0.5);
+	margin-top: var(--space-3);
+	text-align: right;
+}
+
+/* Mobile portrait: Animal-Crossing-style split. Speech bubble pinned
+ * to the top of the screen (avatar + name + body text), choices float
+ * loose at the bottom as pill buttons. The world stays visible in the
+ * gap between them — no dim, no full-screen panel. */
+@media (max-width: 600px)
+{
+	#dialog-bar
+	{
+		top: 0;
+		bottom: auto;
+		padding: var(--space-3);
+	}
+
+	/* No backdrop tint - we want the game visible behind the bubble +
+	 * choices, like the AC reference. */
+	#dialog-bar .dialog-dim
+	{
+		display: none;
+	}
+
+	#dialog-bar .dialog-box
+	{
+		flex-direction: column;
+		min-height: 0;
+		max-height: calc(100vh - var(--space-6));
+		/* Drop the bubble's backdrop-filter on mobile - it makes
+		 * .dialog-box the containing block for any position:fixed
+		 * descendant (CSS spec: backdrop-filter creates one), which
+		 * would pin .dialog-choices to the bubble's bottom (= near the
+		 * top of the screen) instead of the viewport bottom. The bg
+		 * token is already 97% opaque, so legibility is fine without
+		 * the blur. */
+		-webkit-backdrop-filter: none;
+		backdrop-filter: none;
+	}
+
+	#dialog-bar .dialog-portrait
+	{
+		width: 100%;
+		display: grid;
+		grid-template-columns: auto 1fr;
+		grid-template-areas:
+			"img name"
+			"img role";
+		gap: 0 var(--space-3);
+		padding: var(--space-3) var(--space-4);
+		border-right: none;
+		border-bottom: 2px solid rgba(255, 185, 0, 0.25);
+		align-items: center;
+	}
+
+	#dialog-bar .portrait-img
+	{
+		grid-area: img;
+		width: 48px;
+		height: 48px;
+		font-size: var(--text-h4);
+		border-width: 2px;
+	}
+
+	#dialog-bar .portrait-name
+	{
+		grid-area: name;
+		align-self: end;
+		text-align: left;
+	}
+
+	#dialog-bar .portrait-role
+	{
+		grid-area: role;
+		align-self: start;
+		text-align: left;
+	}
+
+	#dialog-bar .dialog-content
+	{
+		padding: var(--space-3) var(--space-4) var(--space-4);
+		min-height: 0;
+	}
+
+	/* Text scrolls inside its own band so really long speeches don't
+	 * push the bubble off-screen. */
+	#dialog-bar .dialog-text
+	{
+		font-size: var(--text-body-sm);
+		max-height: 28vh;
+		overflow-y: auto;
+		margin-bottom: 0;
+	}
+
+	/* Choices break out of the bubble and float at the bottom of the
+	 * viewport - position: fixed pulls them out of the dialog-box flex
+	 * flow without needing a DOM change. The list itself becomes a
+	 * mini-card matching the bubble at the top: the per-button bg
+	 * tokens are only ~4% alpha, which is invisible against the game
+	 * render without a card backing. Buttons keep their desktop style
+	 * (rectangular, regular radius). */
+	#dialog-bar .dialog-choices
+	{
+		position: fixed;
+		left: var(--space-3);
+		right: var(--space-3);
+		bottom: var(--space-4);
+		margin-top: 0;
+		z-index: 1;
+		background: var(--color-overlay-bg);
+		border: 2px solid rgba(255, 185, 0, 0.45);
+		border-radius: var(--radius-xl);
+		padding: var(--space-3);
+		box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+	}
+}

@@ -1,0 +1,155 @@
+/* On-screen touch controls - only mounted when the device reports
+ * touch support, and only VISIBLE while the page is in touch-active
+ * mode (the html.touch-active class TouchControls.ts toggles on real
+ * touch / off on mouse + gameplay keypress). Hybrid devices (Surface,
+ * touchscreen laptop) get the right HUD per session.
+ *
+ * Joystick is dynamic: appears at the first drag position. Action
+ * buttons live in a context-aware cluster bottom-right; what shows up
+ * is driven by [data-touch-mode] + JS.
+ */
+
+#touch-controls
+{
+	position: fixed;
+	inset: 0;
+	pointer-events: none;
+	z-index: var(--z-overlay);
+	display: none;
+}
+
+html.touch-active #touch-controls
+{
+	display: block;
+}
+
+/* While the player is in touch mode, kill the browser's default
+ * gesture handling (scroll, pull-to-refresh, double-tap zoom, swipe-
+ * back). Without this the very first vertical drag of a joystick
+ * fires `pointercancel` instead of `pointermove` and the joystick
+ * vanishes mid-stroke.
+ */
+html.touch-active,
+html.touch-active body,
+html.touch-active canvas,
+html.touch-active #canvas
+{
+	touch-action: none;
+	overscroll-behavior: none;
+}
+
+/* Joystick base - hidden by default, JS positions + activates it on
+ * first drag. Width = JOYSTICK_RADIUS * 2 in TouchControls.ts; the
+ * responsive shrinker on small phones doesn't change displacement
+ * physics, only visual scale. */
+#touch-joystick-base
+{
+	position: absolute;
+	width: 140px;
+	height: 140px;
+	border-radius: var(--radius-full);
+	background: rgba(0, 0, 0, 0.25);
+	border: 2px solid rgba(255, 255, 255, 0.4);
+	pointer-events: none;
+	touch-action: none;
+	opacity: 0;
+	transform: scale(0.75);
+	transition:
+		opacity var(--motion-fast) var(--ease-default),
+		transform var(--motion-fast) var(--ease-default);
+}
+
+#touch-joystick-base.active
+{
+	opacity: 1;
+	transform: scale(1);
+}
+
+#touch-joystick-thumb
+{
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -50%);
+	width: 60px;
+	height: 60px;
+	border-radius: var(--radius-full);
+	background: rgba(255, 255, 255, 0.7);
+	pointer-events: none;
+}
+
+#touch-joystick-base.active #touch-joystick-thumb
+{
+	background: var(--color-primary);
+}
+
+/* Context-aware button cluster. Buttons are absolutely positioned by
+ * data-slot index assigned in JS - primary lands at slot 0 (outer
+ * column, lowest), secondaries fill upward alternating between the
+ * inner and outer columns. Same staircase shape the original
+ * Sketchbook touch-controls used (jump / F / sprint laid out 2D)
+ * just generalised to 6 slots so vehicle modes with 4-6 buttons
+ * still pack into the bottom-right corner instead of one tall stack
+ * eating the camera-drag area.
+ */
+#touch-buttons
+{
+	position: absolute;
+	inset: 0;
+	pointer-events: none;
+}
+
+.touch-action-btn
+{
+	position: absolute;
+	border-radius: var(--radius-full);
+	background: rgba(0, 0, 0, 0.45);
+	border: 2px solid rgba(255, 255, 255, 0.55);
+	color: #fff;
+	font-family: var(--font-label);
+	font-weight: var(--weight-bold);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	pointer-events: auto;
+	touch-action: manipulation;
+	user-select: none;
+	-webkit-user-select: none;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+/* Primary = the most relevant action right now (Talk if NPC, else
+ * Action / Exit). Bigger, more prominent - the player's eye lands
+ * here first. */
+.touch-action-btn--primary
+{
+	width: 78px;
+	height: 78px;
+	font-size: 28px;
+}
+
+/* Secondary actions - smaller stack siblings. Brake, View, Seat
+ * switch, Up / Down all sit at this size. */
+.touch-action-btn--secondary
+{
+	width: 60px;
+	height: 60px;
+	font-size: 18px;
+}
+
+/* Slot positions, bottom-right anchored. Even slots ride the outer
+ * column (right: 24px), odd slots step inward one button-width so
+ * the cluster reads as a 2-column staircase climbing up-and-left. */
+.touch-action-btn[data-slot="0"] { right: 24px;  bottom: 24px;  }
+.touch-action-btn[data-slot="1"] { right: 110px; bottom: 50px;  }
+.touch-action-btn[data-slot="2"] { right: 24px;  bottom: 120px; }
+.touch-action-btn[data-slot="3"] { right: 110px; bottom: 140px; }
+.touch-action-btn[data-slot="4"] { right: 24px;  bottom: 200px; }
+.touch-action-btn[data-slot="5"] { right: 110px; bottom: 220px; }
+
+.touch-action-btn:active,
+.touch-action-btn.pressed
+{
+	background: var(--color-primary);
+	color: var(--color-on-primary);
+}

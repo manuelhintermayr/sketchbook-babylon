@@ -1,0 +1,232 @@
+/* Title screen - first thing the player sees before any world is
+ * loaded. Same blue gradient as the loading screen so the transition
+ * is seamless. Click or any keypress dismisses it and triggers the
+ * actual world build. */
+
+#title-screen
+{
+	position: fixed;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	padding: var(--space-4);
+	background: linear-gradient(to bottom, var(--color-loading-top) 0%, var(--color-loading-bottom) 100%);
+	z-index: var(--z-modal);
+	cursor: pointer;
+	user-select: none;
+}
+
+#title-screen .title-text
+{
+	font-family: var(--font-headline);
+	font-weight: var(--weight-extrabold);
+	/* Scales fluidly between 1.8rem on the narrowest phones and 4rem
+	 * on desktop - clamp(min, preferred, max) means the text is
+	 * always visible without clipping at any viewport width. */
+	font-size: clamp(1.8rem, 11vw, 4rem);
+	color: #ffffff;
+	text-shadow: var(--text-shadow-overlay);
+	margin-bottom: var(--space-2);
+	max-width: 100%;
+	text-align: center;
+	overflow-wrap: break-word;
+}
+
+#title-screen .title-version
+{
+	font-family: var(--font-label);
+	font-weight: var(--weight-medium);
+	font-size: var(--text-body);
+	color: rgba(255, 255, 255, 0.7);
+	margin-bottom: var(--space-8);
+}
+
+#title-screen .title-prompt
+{
+	font-family: var(--font-body);
+	font-size: var(--text-body);
+	color: rgba(255, 255, 255, 0.85);
+	text-shadow: var(--text-shadow-overlay);
+	animation: title-pulse 2s ease-in-out infinite;
+	margin-top: var(--space-8);
+}
+
+#title-screen .title-prompt kbd
+{
+	font-family: var(--font-mono);
+	font-weight: var(--weight-bold);
+	background: #eff0f2;
+	color: #111111;
+	box-shadow: var(--shadow-keycap);
+	padding: 2px 8px;
+	border-radius: var(--radius-sm);
+	font-size: var(--text-body-sm);
+	text-shadow: none;
+	margin: 0 2px;
+}
+
+@keyframes title-pulse
+{
+	0%, 100% { opacity: 0.7; }
+	50%      { opacity: 1; }
+}
+
+@keyframes title-bounce
+{
+	0%, 100% { transform: translateY(0); }
+	50%      { transform: translateY(-10px); }
+}
+
+#title-screen .cube-bounce
+{
+	animation: title-bounce 2s ease-in-out infinite;
+}
+
+#title-screen.fade-out
+{
+	opacity: 0;
+	transition: opacity var(--motion-slow) var(--ease-default);
+	pointer-events: none;
+}
+
+#title-screen .title-lang
+{
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex-wrap: wrap;
+	gap: var(--space-3);
+	margin-top: var(--space-6);
+	font-family: var(--font-label);
+	font-size: var(--text-body-sm);
+	color: rgba(255, 255, 255, 0.85);
+	text-shadow: var(--text-shadow-overlay);
+	max-width: 100%;
+}
+
+#title-screen .title-lang-btn
+{
+	font-family: var(--font-label);
+	font-weight: var(--weight-bold);
+	font-size: var(--text-body-sm);
+	background: rgba(255, 255, 255, 0.15);
+	color: #ffffff;
+	border: 1px solid rgba(255, 255, 255, 0.4);
+	border-radius: var(--radius-md);
+	padding: var(--space-2) var(--space-4);
+	cursor: pointer;
+	transition: background var(--motion-fast) var(--ease-default);
+}
+
+#title-screen .title-lang-btn:hover
+{
+	background: rgba(255, 255, 255, 0.3);
+}
+
+#title-screen .title-lang-btn.active
+{
+	background: var(--color-primary);
+	color: var(--color-on-primary);
+	border-color: var(--color-primary);
+}
+
+#title-screen .title-theme-btn
+{
+	margin-left: var(--space-2);
+	width: 36px;
+	height: 36px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	background: rgba(255, 255, 255, 0.15);
+	border: 1px solid rgba(255, 255, 255, 0.4);
+	border-radius: var(--radius-full);
+	cursor: pointer;
+	padding: 0;
+	transition: background var(--motion-fast) var(--ease-default);
+}
+
+#title-screen .title-theme-btn:hover
+{
+	background: rgba(255, 255, 255, 0.3);
+}
+
+/* Sun (light) and moon (dark) glyphs as pure CSS - no font load
+ * required so this works before the title-screen fonts arrive. The
+ * sun ring uses `box-shadow` for the ray spokes; the moon is a
+ * single circle with a clipping shadow for the crescent. */
+#title-screen .title-theme-icon
+{
+	display: inline-block;
+	width: 16px;
+	height: 16px;
+	border-radius: var(--radius-full);
+	background: #fff;
+	position: relative;
+	box-shadow:
+		0 -10px 0 -6px #fff,
+		0 10px 0 -6px #fff,
+		-10px 0 0 -6px #fff,
+		10px 0 0 -6px #fff,
+		7px -7px 0 -6px #fff,
+		-7px -7px 0 -6px #fff,
+		7px 7px 0 -6px #fff,
+		-7px 7px 0 -6px #fff;
+}
+
+#title-screen .title-theme-btn.active .title-theme-icon
+{
+	background: transparent;
+	box-shadow: inset -4px -4px 0 0 #fff;
+	transform: rotate(-30deg);
+}
+
+/* Sound toggle - same shape as theme button. Speaker glyph drawn in
+ * pure CSS; the line through it (mute) appears via the inactive
+ * state's pseudo-element so we don't need font icons here either. */
+#title-screen .title-sound-btn
+{
+	margin-left: var(--space-2);
+	width: 36px;
+	height: 36px;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	background: rgba(255, 255, 255, 0.15);
+	border: 1px solid rgba(255, 255, 255, 0.4);
+	border-radius: var(--radius-full);
+	cursor: pointer;
+	padding: 0;
+	transition: background var(--motion-fast) var(--ease-default);
+}
+
+#title-screen .title-sound-btn:hover
+{
+	background: rgba(255, 255, 255, 0.3);
+}
+
+#title-screen .title-sound-icon
+{
+	display: inline-block;
+	position: relative;
+	width: 14px;
+	height: 10px;
+	background: #fff;
+	clip-path: polygon(0 30%, 35% 30%, 70% 0, 70% 100%, 35% 70%, 0 70%);
+}
+
+/* Diagonal mute slash when sound is off (button NOT .active) */
+#title-screen .title-sound-btn:not(.active) .title-sound-icon::after
+{
+	content: '';
+	position: absolute;
+	left: -2px;
+	top: 50%;
+	width: 18px;
+	height: 2px;
+	background: #ff5e5e;
+	transform: rotate(-30deg);
+	transform-origin: 0 50%;
+}

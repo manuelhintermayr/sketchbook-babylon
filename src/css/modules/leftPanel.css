@@ -1,0 +1,67 @@
+/* Left panel - pinned controls overlay over the 3D scene. */
+
+.left-panel
+{
+	position: fixed;
+	height: calc(100% - 70px);
+	padding-top: 70px;
+	flex-direction: column;
+	display: flex;
+	justify-content: space-between;
+	pointer-events: none;
+	/* Shadow for readability against the 3D canvas - opt-in here
+	 * since the global body shadow was removed (it bled into card
+	 * UIs). .ctrl-key opts out further down so the keycap chrome
+	 * stays crisp. */
+	text-shadow: var(--text-shadow-overlay);
+}
+
+.left-panel .panel-segment
+{
+	flex-grow: 1;
+	flex-basis: 100px;
+	padding: var(--space-5);
+	overflow: hidden;
+}
+
+.flex-bottom
+{
+	display: flex;
+	flex-direction: column;
+	justify-content: flex-end;
+}
+
+.controls-title
+{
+	margin-bottom: var(--space-3);
+}
+
+.ctrl-row
+{
+	margin-bottom: var(--space-2);
+	display: flex;
+	align-items: center;
+}
+
+.ctrl-key
+{
+	text-shadow: none;
+	font-weight: var(--weight-bold);
+	display: inline-block;
+	font-family: var(--font-mono);
+	padding: 2px 5px;
+	margin-right: 2px;
+	min-width: 10px;
+	text-align: center;
+	margin-left: 2px;
+	background: #eff0f2;
+	box-shadow: var(--shadow-keycap);
+	color: #111111;
+	border-radius: var(--radius-sm);
+	font-size: var(--text-body-sm);
+}
+
+.ctrl-desc
+{
+	margin-left: var(--space-2);
+}

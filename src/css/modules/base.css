@@ -1,0 +1,62 @@
+/* Base - body / html resets, default typography, canvas + ui-container
+ * positioning. All visual constants come from tokens.css. */
+
+*,
+*::before,
+*::after
+{
+	box-sizing: border-box;
+}
+
+body
+{
+	background-color: var(--color-background);
+	overflow: hidden;
+	margin: 0;
+	font-family: var(--font-body);
+	color: #ffffff;
+	user-select: none;
+	-webkit-font-smoothing: antialiased;
+	/* No global text-shadow. The original design dropped one on every
+	 * descendant for "outdoor readability" against the 3D canvas, but
+	 * once we have proper card surfaces (lil-gui, settings modal,
+	 * dialog box, SweetAlert popups) the inherited shadow turns into
+	 * a fuzzy black halo on every label - especially obvious in light
+	 * mode. The shadow is now opt-in per element (see
+	 * .name-label, .left-panel, #laps, .title-* etc.). */
+}
+
+html,
+body
+{
+	width: 100%;
+	height: 100%;
+}
+
+h1
+{
+	font-weight: var(--weight-regular);
+	font-size: 50px;
+	font-family: var(--font-display-alt);
+}
+
+/* Lap counter floats over the 3D canvas - same shadow opt-in as the
+ * left panel so it stays readable against bright skies. */
+#laps
+{
+	color: #ffffff;
+	text-shadow: var(--text-shadow-overlay);
+}
+
+#canvas
+{
+	width: 100%;
+	height: 100%;
+}
+
+#ui-container
+{
+	position: absolute;
+	top: 0;
+	height: 100vh;
+}

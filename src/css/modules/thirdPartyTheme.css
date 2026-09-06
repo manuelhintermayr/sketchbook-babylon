@@ -1,0 +1,64 @@
+/* Theme overrides for third-party libraries that ship their own CSS
+ * and don't pick up our --color-* tokens automatically. Without
+ * these, flipping html.dark only affects the bits we styled
+ * ourselves; SweetAlert2 popups and lil-gui debug panels stay on
+ * their library defaults regardless of mode.
+ */
+
+/* ── SweetAlert2 ──────────────────────────────────────────────────
+ * Used for the welcome dialog, the WebGL warning, and the empty-
+ * world fallback. Default theme is bright white card / dark text;
+ * we keep that in light mode and flip both when html.dark is set.
+ */
+html.dark .swal2-popup
+{
+	background: var(--color-overlay-bg);
+	color: var(--color-overlay-text);
+}
+
+html.dark .swal2-title,
+html.dark .swal2-html-container,
+html.dark .swal2-content
+{
+	color: var(--color-overlay-text);
+}
+
+html.dark .swal2-footer
+{
+	color: var(--color-overlay-text-soft);
+	border-top-color: var(--color-overlay-choice-border);
+}
+
+html.dark .swal2-footer a
+{
+	color: var(--color-primary);
+}
+
+/* ── lil-gui ──────────────────────────────────────────────────────
+ * lil-gui exposes its own CSS custom properties; setting them at
+ * .lil-gui scope overrides the library defaults without monkey-
+ * patching its stylesheet. Light mode gets a soft cream surface
+ * with dark text; dark mode keeps the library's near-black palette.
+ */
+html:not(.dark) .lil-gui
+{
+	--background-color: #fafafa;
+	--text-color: #222222;
+	--title-background-color: #f0f0f0;
+	--title-text-color: #222222;
+	--widget-color: #e8e8e8;
+	--hover-color: #ffd54f;
+	--focus-color: var(--color-primary);
+	--number-color: #333333;
+	--string-color: #333333;
+	border: 1px solid var(--color-outline);
+}
+
+html.dark .lil-gui
+{
+	--background-color: #1a1a1a;
+	--text-color: #e0e0e0;
+	--title-background-color: #2a2a2a;
+	--title-text-color: #ffffff;
+	--widget-color: #2f2f2f;
+}

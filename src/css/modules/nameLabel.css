@@ -1,0 +1,47 @@
+/* CSS2D name tags above characters. Pattern from tkkaushik369/socketControl
+ * (the .label / .label.me distinction is theirs). pointer-events:none so
+ * labels never eat clicks; transform:translate(-50%,-100%) anchors the
+ * tag's bottom-center on its world position. */
+
+.name-label
+{
+	position: absolute;
+	transform: translate(-50%, -100%);
+	padding: 2px var(--space-2);
+	background: rgba(0, 0, 0, 0.55);
+	color: #ffffff;
+	font-family: var(--font-label);
+	font-size: var(--text-caption);
+	font-weight: var(--weight-medium);
+	border-radius: var(--radius-md);
+	white-space: nowrap;
+	pointer-events: none;
+	user-select: none;
+	text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.name-label.me
+{
+	background: rgba(40, 100, 200, 0.7);
+	color: #ffffff;
+	font-weight: var(--weight-bold);
+}
+
+/* Animal labels - hidden by default via Animal_Labels feature gate
+ * (WorldLabels toggles display:none). The kind sub-classes give each
+ * species a distinct background so dogs and cats are easy to scan. */
+.name-label.animal
+{
+	font-size: var(--text-overline);
+	padding: 1px var(--space-2);
+}
+
+.name-label.animal.dog
+{
+	background: rgba(139, 90, 43, 0.85);
+}
+
+.name-label.animal.cat
+{
+	background: rgba(120, 120, 130, 0.85);
+}

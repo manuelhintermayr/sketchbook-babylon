@@ -1,0 +1,204 @@
+/* ─────────────────────────────────────────────────────────────────
+ * Sketchbook design tokens
+ *
+ * Centralised CSS custom properties for colour, typography, spacing,
+ * borders, shadows, motion and z-index ordering. Every other module
+ * can reference var(--…) instead of repeating magic numbers.
+ *
+ * Switch the whole UI to dark mode by setting `data-theme="sketchbook"`
+ * + `class="dark"` on <html> (the .dark override at the bottom of this
+ * file flips the surface palette).
+ * ───────────────────────────────────────────────────────────────── */
+
+:root,
+[data-theme="sketchbook"]
+{
+	/* Brand */
+	--color-primary: #FFB900;
+	--color-on-primary: #222222;
+	--color-primary-shadow: rgb(228, 158, 0);
+	--color-primary-container: #ffd54f;
+
+	--color-secondary: #222222;
+	--color-on-secondary: #ffffff;
+
+	--color-tertiary: #568db5;
+	--color-on-tertiary: #ffffff;
+	--color-tertiary-light: #ccdde8;
+
+	/* Surface scale */
+	--color-background: #ffffff;
+	--color-surface: #ffffff;
+	--color-surface-dim: #f5f5f5;
+	--color-surface-container: #f0f0f0;
+	--color-surface-container-high: #e8e8e8;
+	--color-surface-container-highest: #e0e0e0;
+
+	--color-on-surface: #222222;
+	--color-on-surface-variant: #666666;
+	--color-on-background: #222222;
+	--color-on-surface-overlay: #ffffff;
+
+	--color-outline: #c3c3c3;
+	--color-outline-variant: #e0e0e0;
+
+	/* Semantic */
+	--color-error: #d32f2f;
+	--color-on-error: #ffffff;
+	--color-success: #4caf50;
+	--color-on-success: #ffffff;
+	--color-warning: #FFB900;
+	--color-on-warning: #222222;
+	--color-info: #568db5;
+	--color-on-info: #ffffff;
+
+	--color-inverse-surface: #222222;
+	--color-inverse-on-surface: #ffffff;
+
+	/* Loading-screen gradient */
+	--color-loading-top: #568db5;
+	--color-loading-bottom: #ccdde8;
+
+	/* Themed overlays - dialog box, SweetAlert2, planet menu, etc.
+	 * These are picked up by the matching CSS modules so a single
+	 * dark-mode flip swaps every popup at once instead of each module
+	 * carrying its own hardcoded palette. */
+	--color-overlay-bg: rgba(255, 252, 245, 0.97);
+	--color-overlay-text: #1a1a1a;
+	--color-overlay-text-soft: rgba(0, 0, 0, 0.6);
+	--color-overlay-choice-bg: rgba(0, 0, 0, 0.04);
+	--color-overlay-choice-border: rgba(0, 0, 0, 0.12);
+	--color-overlay-choice-bg-hover: rgba(255, 185, 0, 0.18);
+
+	/* Typography */
+	--font-headline: 'Solway', serif;
+	--font-body: 'Solway', serif;
+	--font-label: 'Catamaran', sans-serif;
+	--font-mono: 'Cutive Mono', monospace;
+	--font-display-alt: 'Alfa Slab One', cursive;
+
+	--text-display: 3.5rem;
+	--text-h1: 2.75rem;
+	--text-h2: 2rem;
+	--text-h3: 1.5rem;
+	--text-h4: 1.25rem;
+	--text-body-lg: 1.125rem;
+	--text-body: 1rem;
+	--text-body-sm: 0.875rem;
+	--text-caption: 0.75rem;
+	--text-overline: 0.625rem;
+
+	--weight-light: 300;
+	--weight-regular: 400;
+	--weight-medium: 500;
+	--weight-bold: 700;
+	--weight-extrabold: 800;
+	--weight-black: 900;
+
+	--leading-tight: 1.15;
+	--leading-normal: 1.5;
+	--leading-relaxed: 1.65;
+
+	--tracking-normal: 0;
+	--tracking-wide: 0.03em;
+
+	/* Spacing */
+	--space-1: 0.25rem;
+	--space-2: 0.5rem;
+	--space-3: 0.75rem;
+	--space-4: 1rem;
+	--space-5: 1.25rem;
+	--space-6: 1.5rem;
+	--space-8: 2rem;
+	--space-10: 2.5rem;
+	--space-12: 3rem;
+	--space-16: 4rem;
+	--space-20: 5rem;
+
+	/* Borders */
+	--border-width-sm: 1px;
+	--border-width-md: 2px;
+	--border-width-lg: 3px;
+
+	--radius-none: 0;
+	--radius-sm: 2px;
+	--radius-md: 4px;
+	--radius-lg: 6px;
+	--radius-xl: 8px;
+	--radius-pill: 9999px;
+	--radius-full: 50%;
+
+	/* Shadows */
+	--shadow-none: none;
+	--shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+	--shadow-md: 0 2px 6px rgba(0, 0, 0, 0.2);
+	--shadow-lg: 0 4px 12px rgba(0, 0, 0, 0.15);
+	--shadow-gold: 0 4px 0 0 var(--color-primary-shadow);
+	--shadow-keycap: inset 0 0 25px #e8e8e8, 0 1px 0 #c3c3c3, 0 2px 0 #c9c9c9, 0 2px 3px #000;
+	--text-shadow-overlay: 1px 1px 1px #000, 0px 1px 3px #000;
+
+	/* z-index ordering */
+	--z-base: 0;
+	--z-dropdown: 10;
+	--z-sticky: 20;
+	--z-overlay: 30;
+	--z-modal: 40;
+	--z-toast: 50;
+	--z-tooltip: 60;
+	--z-stats: 10000;
+
+	/* Motion */
+	--motion-fast: 100ms;
+	--motion-normal: 200ms;
+	--motion-slow: 400ms;
+	--ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html.dark,
+[data-theme="sketchbook"].dark
+{
+	--color-background: #1a1a1a;
+	--color-surface: #222222;
+	--color-surface-dim: #1f1f1f;
+	--color-surface-container: #2a2a2a;
+	--color-surface-container-high: #333333;
+	--color-surface-container-highest: #3a3a3a;
+	--color-on-surface: #e0e0e0;
+	--color-on-surface-variant: #999999;
+	--color-on-background: #e0e0e0;
+	--color-outline: #444444;
+	--color-outline-variant: #2a2a2a;
+	/* Title + loading screens. Same gradient stops as light mode but
+	 * darker ends so the player actually notices the toggle on the
+	 * title screen (the rest of the dark UI doesn't show before the
+	 * world boots). */
+	--color-loading-top: #1a2a38;
+	--color-loading-bottom: #0c141c;
+
+	/* Themed overlays - dark variant of the same tokens used by the
+	 * dialog / sweetalert / planet-menu surfaces in light mode. */
+	--color-overlay-bg: rgba(12, 15, 22, 0.93);
+	--color-overlay-text: rgba(255, 255, 255, 0.92);
+	--color-overlay-text-soft: rgba(255, 255, 255, 0.55);
+	--color-overlay-choice-bg: rgba(255, 255, 255, 0.04);
+	--color-overlay-choice-border: rgba(255, 255, 255, 0.09);
+	--color-overlay-choice-bg-hover: rgba(255, 185, 0, 0.16);
+}
+
+@media (prefers-reduced-motion: reduce)
+{
+	*,
+	*::before,
+	*::after
+	{
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
+}
+
+:focus-visible
+{
+	outline: 2px solid var(--color-primary);
+	outline-offset: 2px;
+}

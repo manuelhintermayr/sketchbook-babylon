@@ -1,0 +1,75 @@
+/* Loading screen. Background is the blue-to-light-blue gradient that
+ * gives Sketchbook its signature pre-game look. The progress bar is
+ * driven from LoadingManager via UIManager.setLoadingProgress(). */
+
+#loading-screen
+{
+	position: absolute;
+	top: 0;
+	z-index: 0;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	flex-direction: column;
+	text-align: center;
+	height: 100%;
+	width: 100%;
+}
+
+#loader
+{
+	display: flex;
+	-webkit-box-align: center;
+	align-items: center;
+	-webkit-box-pack: center;
+	justify-content: center;
+}
+
+#main-title
+{
+	margin-bottom: 0;
+}
+
+#loading-text
+{
+	font-size: var(--text-body-lg);
+	margin-top: var(--space-2);
+	color: rgba(255, 255, 255, 0.85);
+}
+
+#loading-percent
+{
+	font-family: var(--font-mono);
+	font-size: var(--text-h3);
+	color: #ffffff;
+	text-shadow: var(--text-shadow-overlay);
+	margin-top: var(--space-4);
+}
+
+#loading-bar-track
+{
+	width: 300px;
+	height: 6px;
+	background: rgba(255, 255, 255, 0.2);
+	border-radius: var(--radius-pill);
+	margin-top: var(--space-3);
+	overflow: hidden;
+}
+
+#loading-bar-fill
+{
+	height: 100%;
+	width: 0;
+	background: #ffffff;
+	border-radius: var(--radius-pill);
+	transition: width var(--motion-fast) var(--ease-default);
+}
+
+#loading-screen-background
+{
+	z-index: -1;
+	position: absolute;
+	height: 100%;
+	width: 100%;
+	background: linear-gradient(to bottom, var(--color-loading-top) 0%, var(--color-loading-bottom) 100%);
+}

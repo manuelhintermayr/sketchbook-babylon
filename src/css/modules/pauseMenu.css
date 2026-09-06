@@ -1,0 +1,99 @@
+/* Pause overlay (Esc) - full-screen dim with frosted blur, vertical
+ * stack of menu buttons, hint at the bottom. Buttons are translucent
+ * white with a subtle border that turns gold on hover. The Quit
+ * variant is bordered red to telegraph the destructive action. */
+
+#pause-overlay
+{
+	position: fixed;
+	inset: 0;
+	background: rgba(0, 0, 0, 0.65);
+	-webkit-backdrop-filter: blur(4px);
+	backdrop-filter: blur(4px);
+	display: none;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	z-index: var(--z-modal);
+	pointer-events: auto;
+}
+
+#pause-overlay.visible
+{
+	display: flex;
+}
+
+#pause-overlay .pause-title
+{
+	font-family: var(--font-headline);
+	font-weight: var(--weight-extrabold);
+	font-size: var(--text-h1);
+	color: #ffffff;
+	text-shadow: var(--text-shadow-overlay);
+	margin-bottom: var(--space-8);
+	letter-spacing: var(--tracking-wide);
+}
+
+#pause-overlay .pause-menu
+{
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-3);
+	min-width: 280px;
+}
+
+#pause-overlay .pause-btn
+{
+	display: flex;
+	align-items: center;
+	gap: var(--space-3);
+	padding: var(--space-4) var(--space-6);
+	background: rgba(255, 255, 255, 0.1);
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	border-radius: var(--radius-lg);
+	color: #ffffff;
+	font-family: var(--font-body);
+	font-size: var(--text-body);
+	font-weight: var(--weight-bold);
+	cursor: pointer;
+	transition: background var(--motion-fast) var(--ease-default), border-color var(--motion-fast) var(--ease-default);
+	text-decoration: none;
+	text-align: left;
+}
+
+#pause-overlay .pause-btn:hover,
+#pause-overlay .pause-btn:focus-visible
+{
+	background: rgba(255, 255, 255, 0.2);
+	border-color: var(--color-primary);
+	outline: none;
+}
+
+#pause-overlay .pause-btn.danger
+{
+	border-color: var(--color-error);
+}
+
+#pause-overlay .pause-btn.danger:hover,
+#pause-overlay .pause-btn.danger:focus-visible
+{
+	background: rgba(211, 47, 47, 0.18);
+	border-color: var(--color-error);
+}
+
+#pause-overlay .pause-icon
+{
+	display: inline-block;
+	width: 1.25rem;
+	text-align: center;
+	font-family: var(--font-mono);
+	font-weight: var(--weight-bold);
+}
+
+#pause-overlay .pause-hint
+{
+	font-family: var(--font-label);
+	font-size: var(--text-caption);
+	color: rgba(255, 255, 255, 0.65);
+	margin-top: var(--space-8);
+}

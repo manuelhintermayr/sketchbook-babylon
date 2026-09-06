@@ -1,0 +1,135 @@
+/* Friendly fallback shown when window.onerror or unhandledrejection
+ * fires. Pinned full-screen above everything so the player isn't left
+ * staring at a black canvas. */
+
+#error-overlay
+{
+	position: fixed;
+	inset: 0;
+	display: none;
+	align-items: center;
+	justify-content: center;
+	background: rgba(0, 0, 0, 0.7);
+	-webkit-backdrop-filter: blur(6px);
+	backdrop-filter: blur(6px);
+	z-index: var(--z-toast);
+	padding: var(--space-4);
+}
+
+#error-overlay.visible
+{
+	display: flex;
+}
+
+#error-overlay .error-card
+{
+	max-width: 540px;
+	width: 100%;
+	background: var(--color-surface);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow-lg);
+	padding: var(--space-10) var(--space-8);
+	text-align: center;
+	color: var(--color-on-surface);
+	text-shadow: none;
+	max-height: calc(100vh - 2 * var(--space-8));
+	overflow-y: auto;
+}
+
+#error-overlay .error-icon
+{
+	font-size: 64px;
+	color: var(--color-error);
+	margin-bottom: var(--space-4);
+	line-height: 1;
+}
+
+#error-overlay .error-code
+{
+	font-family: var(--font-mono);
+	font-size: var(--text-h2);
+	font-weight: var(--weight-bold);
+	color: var(--color-error);
+	margin-bottom: var(--space-2);
+}
+
+#error-overlay .error-title
+{
+	font-family: var(--font-headline);
+	font-size: var(--text-h3);
+	font-weight: var(--weight-bold);
+	margin-bottom: var(--space-4);
+	color: var(--color-on-surface);
+}
+
+#error-overlay .error-desc
+{
+	font-size: var(--text-body-sm);
+	color: var(--color-on-surface-variant);
+	line-height: var(--leading-relaxed);
+	margin-bottom: var(--space-6);
+	font-family: var(--font-body);
+}
+
+#error-overlay .error-stack
+{
+	text-align: left;
+	font-family: var(--font-mono);
+	font-size: var(--text-caption);
+	background: var(--color-surface-container);
+	padding: var(--space-4);
+	border-radius: var(--radius-md);
+	color: var(--color-error);
+	margin-bottom: var(--space-6);
+	overflow-x: auto;
+	white-space: pre;
+	line-height: 1.6;
+	max-height: 240px;
+	overflow-y: auto;
+}
+
+#error-overlay .error-actions
+{
+	display: flex;
+	gap: var(--space-3);
+	justify-content: center;
+	flex-wrap: wrap;
+}
+
+#error-overlay .error-btn
+{
+	display: inline-block;
+	padding: var(--space-3) var(--space-6);
+	font-family: var(--font-body);
+	font-weight: var(--weight-bold);
+	font-size: var(--text-body);
+	border: none;
+	border-radius: var(--radius-md);
+	cursor: pointer;
+	transition: opacity var(--motion-fast) var(--ease-default);
+}
+
+#error-overlay .error-btn-primary
+{
+	background: var(--color-primary);
+	color: var(--color-on-primary);
+	box-shadow: var(--shadow-gold);
+}
+
+#error-overlay .error-btn-primary:active
+{
+	box-shadow: none;
+	transform: translateY(2px);
+}
+
+#error-overlay .error-btn-outline
+{
+	background: transparent;
+	color: var(--color-on-surface);
+	border: 2px solid var(--color-outline);
+}
+
+#error-overlay .error-btn-outline:hover
+{
+	background: var(--color-surface-container);
+}
