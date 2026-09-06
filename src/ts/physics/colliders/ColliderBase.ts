@@ -89,6 +89,8 @@ export abstract class ColliderBase implements ICollider
 		this.body.shape = shape;
 		if (mass > 0)
 		{
+			// Havok stores the inertia divided by the mass, so the tensor it
+			// derived from the shape follows a plain mass change on its own.
 			this.body.setMassProperties({ mass });
 			PhysicsWorld.enableNodeSync(this.body);
 			if (options.allowSleep === false) PhysicsWorld.setAllowSleep(this.body, false);

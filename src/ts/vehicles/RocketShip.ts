@@ -348,7 +348,7 @@ export class RocketShip extends Vehicle implements IControllable, IWorldEntity
 			if (!this.collision.isDisposed)
 			{
 				this.collision.setMotionType(PhysicsMotionType.DYNAMIC);
-				this.collision.setMassProperties({ mass: 50, centerOfMass: new Vector3(0, 0, 0) });
+				this.setChassisMass(50);
 			}
 			this.justBlasted = false;
 		}, 1000);

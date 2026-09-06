@@ -220,13 +220,14 @@ export class Airplane extends Vehicle implements IControllable, IWorldEntity
 
 		let lowerMassInfluence = currentSpeed / 10;
 		lowerMassInfluence = Utils.clamp(lowerMassInfluence, 0, 1);
-		// Lighter at speed. Havok recomputes inertia for the new mass;
-		// only write when the value actually moved to spare the WASM call.
+		// Lighter at speed. setChassisMass rescales the inertia with the
+		// mass like cannon's updateMassProperties did; only write when the
+		// value actually moved to spare the WASM call.
 		const targetMass = 50 * (1 - (lowerMassInfluence * 0.6));
 		if (Math.abs(targetMass - this.currentMass) > 0.01)
 		{
 			this.currentMass = targetMass;
-			body.setMassProperties({ mass: targetMass, centerOfMass: Vector3.Zero() });
+			this.setChassisMass(targetMass);
 		}
 
 		// Rotation stabilization. _lookVelocity is the velocity

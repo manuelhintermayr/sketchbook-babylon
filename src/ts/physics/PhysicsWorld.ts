@@ -24,11 +24,13 @@ export type PhysicsStepListener = (dt: number) => void;
 //
 // Stepping is manual: scene.physicsEnabled is switched off so Babylon's
 // render loop doesn't advance the simulation on its own. World.update
-// calls step(timeStep) once per frame with the Time_Scale-scaled delta -
-// that keeps slow-mo, pause and the 1/30 s clamp working exactly like
-// the cannon accumulator did, just without substeps (Havok is stable at
-// variable dt, and Sketchbook's own pre/post-step math was always tuned
-// per render frame, not per substep).
+// calls step(timeStep) once per frame with the Time_Scale-scaled delta
+// and the accumulator turns that into fixed 1/60 s substeps exactly like
+// cannon's World.step(dt, timeSinceLastCalled) did - the raycast
+// vehicle's tyre model (per-step damping constants, dt-scaled impulse
+// clamps) only behaves the same at every frame rate when the step size
+// is fixed. Pre/post listeners run per substep, matching cannon's
+// preStep / postStep world events.
 
 const _lin = new Vector3();
 const _ang = new Vector3();
@@ -41,6 +43,10 @@ export class PhysicsWorld
 	public engine: PhysicsEngineV2;
 	public dt: number = 1 / 60;
 	public gravity: Vector3 = new Vector3(0, -9.81, 0);
+	// Fixed substep size and cannon's default cap of 10 substeps per call.
+	public fixedStep: number = 1 / 60;
+	public maxSubSteps: number = 10;
+	private accumulator: number = 0;
 
 	private preStepListeners: PhysicsStepListener[] = [];
 	private postStepListeners: PhysicsStepListener[] = [];
@@ -78,11 +84,23 @@ export class PhysicsWorld
 	public step(dt: number): void
 	{
 		if (dt <= 1e-6) return;
-		this.dt = dt;
 
-		for (const listener of this.preStepListeners) listener(dt);
-		this.engine._step(dt);
-		for (const listener of this.postStepListeners) listener(dt);
+		this.accumulator += dt;
+		const started = performance.now();
+		let substeps = 0;
+		while (this.accumulator >= this.fixedStep && substeps < this.maxSubSteps)
+		{
+			for (const listener of this.preStepListeners) listener(this.fixedStep);
+			this.engine._step(this.fixedStep);
+			for (const listener of this.postStepListeners) listener(this.fixedStep);
+			this.accumulator -= this.fixedStep;
+			substeps++;
+
+			// Same guard cannon had: never let the catch-up loop itself eat
+			// more wall-clock time than one step.
+			if (performance.now() - started > this.fixedStep * 1000) break;
+		}
+		this.accumulator = this.accumulator % this.fixedStep;
 	}
 
 	public raycastClosest(from: Vector3, to: Vector3, query: IRaycastQuery | undefined, result: PhysicsRaycastResult): boolean

@@ -61,6 +61,11 @@ export abstract class Vehicle extends TransformNode implements IWorldEntity
 	// or an AI driver gets stuck (cannon exposed this as initQuaternion).
 	public initQuaternion: Quaternion = Quaternion.Identity();
 	private modelContainer: TransformNode;
+	// Bounds of the compound collision shape, grown while the GLB's
+	// box / sphere markers are read. cannon derived a body's inertia
+	// from the box around all its shapes; setChassisMass mirrors that.
+	private collisionMin: Vector3 = new Vector3(Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE);
+	private collisionMax: Vector3 = new Vector3(-Number.MAX_VALUE, -Number.MAX_VALUE, -Number.MAX_VALUE);
 
 	public firstPerson: boolean = false;
 
@@ -122,7 +127,7 @@ export abstract class Vehicle extends TransformNode implements IWorldEntity
 		// the vehicle tuning grew up on that.
 		this.collision = new PhysicsBody(this, PhysicsMotionType.DYNAMIC, false, model.scene);
 		this.collision.shape = this.collisionShape;
-		this.collision.setMassProperties({ mass: 50, centerOfMass: new Vector3(0, 0, 0) });
+		this.setChassisMass(50);
 		PhysicsWorld.enableNodeSync(this.collision);
 
 		// Raycast vehicle component
@@ -421,6 +426,10 @@ export abstract class Vehicle extends TransformNode implements IWorldEntity
 			this.world = world;
 			world.vehicles.push(this);
 			world.addNode(this);
+			// cannon's World.addBody snapshotted the body's quaternion into
+			// initQuaternion; spawn points set the rotation before adding,
+			// so this is where the flip / stuck reset pose comes from.
+			this.initQuaternion.copyFrom(Utils.getQuaternion(this));
 			this.rayCastVehicle.addToWorld(world.physicsWorld);
 
 			this.wheels.forEach((wheel) =>
@@ -515,7 +524,7 @@ export abstract class Vehicle extends TransformNode implements IWorldEntity
 						// Marker scale = half extents, Havok wants full extents.
 						const phys = new PhysicsShapeBox(Vector3.Zero(), Quaternion.Identity(), child.scaling.scale(2), model.scene);
 						applyCollisionFilter(phys, CollisionGroups.Default, ~CollisionGroups.TrimeshColliders);
-						this.addCollisionShape(phys, child.position);
+						this.addCollisionShape(phys, child.position, child.scaling);
 					}
 					else if (shape === 'sphere')
 					{
@@ -523,7 +532,7 @@ export abstract class Vehicle extends TransformNode implements IWorldEntity
 
 						const phys = new PhysicsShapeSphere(Vector3.Zero(), child.scaling.x, model.scene);
 						applyCollisionFilter(phys, CollisionGroups.TrimeshColliders, ~0);
-						this.addCollisionShape(phys, child.position);
+						this.addCollisionShape(phys, child.position, new Vector3(child.scaling.x, child.scaling.x, child.scaling.x));
 					}
 				}
 				if (ud.data === 'navmesh')
@@ -547,10 +556,36 @@ export abstract class Vehicle extends TransformNode implements IWorldEntity
 		}
 	}
 
-	private addCollisionShape(shape: PhysicsShape, offset: Vector3): void
+	private addCollisionShape(shape: PhysicsShape, offset: Vector3, halfExtents: Vector3): void
 	{
 		shape.material = { friction: 0.01, restitution: 0 };
 		this.collisionShape.addChild(shape, offset.clone(), Quaternion.Identity());
+		this.collisionMin.minimizeInPlaceFromFloats(offset.x - halfExtents.x, offset.y - halfExtents.y, offset.z - halfExtents.z);
+		this.collisionMax.maximizeInPlaceFromFloats(offset.x + halfExtents.x, offset.y + halfExtents.y, offset.z + halfExtents.z);
+	}
+
+	// Mass with the inertia cannon gave a body: the box around all of its
+	// shapes (Box.calculateInertia on the AABB half extents), centre of
+	// mass pinned to the node origin. Havok's inertia field is the tensor
+	// divided by the mass, so the box formula goes in without the mass
+	// factor and rescales automatically when the mass changes (the
+	// airplane's speed-dependent mass, the rocket's landing reset).
+	public setChassisMass(mass: number): void
+	{
+		const e = this.collisionMax.x >= this.collisionMin.x
+			? this.collisionMax.subtract(this.collisionMin).scaleInPlace(0.5)
+			: new Vector3(0.5, 0.5, 0.5);
+		const inertia = new Vector3(
+			(e.y * e.y + e.z * e.z) / 3,
+			(e.x * e.x + e.z * e.z) / 3,
+			(e.x * e.x + e.y * e.y) / 3,
+		);
+		this.collision.setMassProperties({
+			mass,
+			centerOfMass: Vector3.Zero(),
+			inertia,
+			inertiaOrientation: Quaternion.Identity(),
+		});
 	}
 
 	private connectSeats(): void

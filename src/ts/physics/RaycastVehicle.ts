@@ -281,7 +281,9 @@ export class RaycastVehicle
 		const props = this.chassisBody.getMassProperties();
 		const mass = props.mass ?? 0;
 		this.chassisMass.invMass = mass > 0 ? 1 / mass : 0;
-		if (props.inertia !== undefined) this.chassisMass.inertia.copyFrom(props.inertia);
+		// Havok reports the inertia divided by the mass; the friction math
+		// wants the actual tensor like cannon's invInertiaWorld did.
+		if (props.inertia !== undefined) this.chassisMass.inertia.copyFrom(props.inertia).scaleInPlace(mass);
 		if (props.inertiaOrientation !== undefined) this.chassisMass.inertiaOrientation.copyFrom(props.inertiaOrientation);
 	}
 
