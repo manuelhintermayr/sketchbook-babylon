@@ -8,6 +8,27 @@ with the same level of detail the README timeline used to carry.
 The format follows [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.0-babylon] - 2026-09
+
+The Babylon.js + Havok edition. A full port of the 0.8.0 code base from
+three.js + cannon-es to Babylon.js 9 + Havok Physics in its own
+repository (`claude/babylon-migration` on top of the `claude/external-features`
+baseline snapshot). Gameplay, maps, scenarios, UI, i18n, touch controls and
+the procedural audio synths are unchanged.
+
+### Changed
+
+- **Renderer** - Babylon `Engine` + right-handed `Scene` (WebGL2 required), ACES tone mapping, `FxaaPostProcess` toggled at runtime, `CascadedShadowGenerator` (1024 px x 3) on the sun light, outline as `DepthRenderer` + Sobel `PostProcess`, DOM `LabelRenderer` replacing `CSS2DRenderer`.
+- **Scene graph** - `Character` and `Vehicle` extend `TransformNode`; glTF loads through `@babylonjs/loaders` and userData markers are read from `node.metadata` via `Utils.userData()`; `Sky` on `SkyMaterial` with custom star / moon-outline meshes; `Ocean` as a `PBRCustomMaterial` wave shader; `Grass` as instanced `VertexBuffer`s on a `ShaderMaterial`; skeletal animation through `AnimationGroup`s with `scene.animationTimeScale` following Time_Scale.
+- **Physics** - Babylon Physics V2 over Havok: `PhysicsWorld` facade with manual stepping and pre/post-step listeners, collider wrappers on `PhysicsBody` + `PhysicsShape*`, capsule character with locked rotation, port of cannon-es's `RaycastVehicle` on Havok bodies (cars, boats, helicopters, airplanes, rocket keep their tuning values), `PhysicsViewer` debug overlay, animated bodies for birds / butterflies, dynamic spheres for the animals.
+- **Audio** - `SpatialAudio.ts` (`AudioListener`, `PositionalAudio` on a `PannerNode`) replaces `THREE.AudioListener` / `PositionalAudio`; every synth keeps its graph.
+- **Sandboxes** - `BaseScene` builds against the World's scene through a factory; the socketControl scenes use small builder helpers, the swift502 credits sign was converted from FBX to GLB with Blender (`build/assets/credits_sign/sign.glb`).
+- **Tooling** - webpack emits `build/HavokPhysics.wasm` next to the bundle and folds Babylon's lazy shader chunks into the single UMD file; `index.html` awaits `Sketchbook.initPhysics()`.
+
+### Removed
+
+- `three`, `cannon-es`, `cannon-es-debugger`, `three-to-cannon` and the upstream vehicle-mesh slots of `BaseScene` (never consumed).
+
 ## [0.8.0] - 2026-05
 
 The biggest release on this fork. Front-of-screen UI overhaul, a wave

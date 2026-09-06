@@ -29,7 +29,7 @@ DialogBox          --z-overlay   (30)              ProximityPrompt with dialog
 PauseMenu          --z-modal     (40)              Esc (after pauseMenu.enable())
 SettingsModal      --z-modal     (40)              PauseMenu → Settings
 ErrorOverlay       --z-toast     (50)              window.onerror, unhandledrejection
-NameLabel          (CSS2D pass)                    attachNameLabel(target, name, isPlayer)
+NameLabel          (label pass)                    attachNameLabel(target, name, isPlayer)
 StatsBox           --z-stats     (10000)           stats.js, toggle via Debug_FPS
 ```
 
@@ -123,9 +123,9 @@ Installed from `index.html` *before* `Sketchbook.World()` is constructed so even
 
 ### NameLabel (`src/ts/world/ui/NameLabel.ts`)
 
-`attachNameLabel(target: THREE.Object3D, name: string, isPlayer: boolean): CSS2DObject`. Creates a `<div class="name-label">` (or `.name-label.me` for the player), wraps it in a CSS2DObject anchored at `(0, 1.2, 0)` relative to the target, and adds it as a child. The label follows the target's world transform automatically.
+`attachNameLabel(target: TransformNode, name: string, isPlayer: boolean): LabelObject | undefined`. Creates a `<div class="name-label">` (or `.name-label.me` for the player) and registers it with the label renderer, anchored at `(0, 1.2, 0)` above the target. The label follows the target's world transform automatically.
 
-Rendered each frame by `world.labelRenderer.render(graphicsWorld, camera)` - a `CSS2DRenderer` with its own absolutely-positioned overlay div (`pointer-events: none`). Distance culling and feature-flag gating run through `WorldLabels` (`src/ts/world/ui/WorldLabels.ts`), the registry on top of the CSS2D pass.
+Rendered each frame by `world.labelRenderer.render(camera)` - the small DOM `LabelRenderer` (`src/ts/world/ui/LabelRenderer.ts`) projects each anchor's world position into its own absolutely-positioned overlay div (`pointer-events: none`) and hides labels behind the camera. Distance culling and feature-flag gating run through `WorldLabels` (`src/ts/world/ui/WorldLabels.ts`), the registry on top of the label pass.
 
 `CharacterSpawnPoint` calls this with `'Du'` + `isPlayer=true` after `takeControl()`. `NPCSpawnPoint` calls it with `userData.name` (or `NPC #N` fallback).
 

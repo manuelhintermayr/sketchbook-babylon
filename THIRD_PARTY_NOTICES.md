@@ -1,6 +1,8 @@
 # Third-Party Notices
 
-**sketchbook-upgraded** is a maintained extension of the original
+**sketchbook-babylon** is the Babylon.js + Havok edition of
+[`sketchbook-upgraded`](https://github.com/manuelhintermayr/sketchbook-upgraded),
+itself a maintained extension of the original
 [`swift502/Sketchbook`](https://github.com/swift502/Sketchbook) engine that also
 merges features from several later community forks. This document records the
 upstream / fork history and the third-party libraries and assets, and separates
@@ -39,15 +41,18 @@ policy").
 Each remains under its own license and copyright; refer to the respective
 project for authoritative terms:
 
-- **[three.js](https://github.com/mrdoob/three.js)** — MIT
-- **[cannon-es](https://github.com/pmndrs/cannon-es)** — MIT
-- **lil-gui**, **stats.js**, **cannon-es-debugger** — MIT (npm packages)
+- **[Babylon.js](https://github.com/BabylonJS/Babylon.js)** (`@babylonjs/core`, `@babylonjs/loaders`, `@babylonjs/materials`) — Apache-2.0
+- **[Havok Physics for Babylon.js](https://www.npmjs.com/package/@babylonjs/havok)** (`@babylonjs/havok`, the WebAssembly build of the Havok engine) — MIT (© 2023 Babylon.js) per the package's LICENSE; Havok is a trademark of its owner, see the package for the engine's own terms
+- **lil-gui**, **stats.js** — MIT (npm packages)
+- **[three.js](https://github.com/mrdoob/three.js)** and **[cannon-es](https://github.com/pmndrs/cannon-es)** (both MIT) are no longer dependencies of this edition; `src/ts/core/CatmullRomCurve3.ts` and `src/ts/physics/RaycastVehicle.ts` are ports of their MIT-licensed spline and raycast-vehicle code and keep the attribution in their headers
 - **joycon.js** (benhatsor) — vendored under `vendor/joycon/` (originally loaded from `cdn.cde.run/Joycon.min.js`); see the upstream project for its license
 
 ## 4. Assets
 
 - **Grass field technique** — based on the instanced-grass approach by Eddie Lee
   (<https://www.eddietree.com/grass>).
+- **Credits sign** — `build/assets/credits_sign/sign.glb` is a Blender conversion of
+  swift502's original `sign.fbx` (kept next to it), done for the glTF loader.
 - **Background music** — bundled tracks generated with [Suno AI](https://suno.com/).
 - **Image assets** — per the README (v0.6.0 note), six third-party images that
   Inthenew's upstream hotlinked (DeviantArt fan-art, an Imgur upload, Farmers

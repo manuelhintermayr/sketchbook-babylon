@@ -4,9 +4,9 @@ This file is a generic context primer for any AI coding assistant working on thi
 
 ## TL;DR for fast bootstrapping
 
-- **What:** maintained extension of the [swift502/Sketchbook](https://github.com/swift502/Sketchbook) 3D engine. Single-player only (no networking).
-- **Stack:** TypeScript, three.js r183, cannon-es, lil-gui, webpack 5. ESLint enforced.
-- **Branch:** `claude/external-features` is the active development line; `master` is upstream-aligned.
+- **What:** Babylon.js + Havok edition of [sketchbook-upgraded](https://github.com/manuelhintermayr/sketchbook-upgraded), a maintained extension of the [swift502/Sketchbook](https://github.com/swift502/Sketchbook) 3D engine. Single-player only (no networking).
+- **Stack:** TypeScript, Babylon.js 9 (`@babylonjs/core` / `loaders` / `materials`), Havok Physics (`@babylonjs/havok`, WebAssembly), lil-gui, webpack 5. ESLint enforced.
+- **Branch:** `claude/babylon-migration` is the active line of this edition; `claude/external-features` is the three.js baseline snapshot it was ported from.
 - **Build:** `npm install && npm run build` (required first), then `npm run dev` → <http://localhost:8080>.
 - **Lint:** `npm run lint` (ESLint over `src/ts/`).
 - **Type-check only:** `npx tsc --noEmit`.
@@ -63,7 +63,7 @@ build/assets/                       ← world.glb, world_sc_v03.glb, world_sc_v0
                                        world_v02.glb, ao_bake.png, credits_sign/, vehicles
 vendor/joycon/                      ← Joycon.min.js + Client.js + joycon-sketchbook.js (loaded
                                        directly via <script> from index.html, no bundling)
-ThreejsEditor/project.json          ← upstream THREE.js editor compat - leave as-is
+ThreejsEditor/project.json          ← upstream three.js editor project file - kept for reference, unused here
 ```
 
 ## Project conventions (do not violate without asking)
@@ -83,7 +83,7 @@ ThreejsEditor/project.json          ← upstream THREE.js editor compat - leave 
 
 ## Engine mental model
 
-- **Frame loop:** `World.render()` (RAF) → `World.update(timeStep)` → every registered `IUpdatable.update()` sorted by `updateOrder` → `tickRenderPipeline(world)` runs `composer.render()` (FXAA only - Bloom + DoF were dropped) → `outlineEffect.renderPass()` (if Outlines on) → `labelRenderer.render()` (CSS2D name tags).
+- **Frame loop:** `World.render()` (RAF) → `World.update(timeStep)` → every registered `IUpdatable.update()` sorted by `updateOrder` → `tickRenderPipeline(world)` runs `scene.render()` (FXAA as a Babylon post-process when enabled - Bloom + DoF were dropped) → `outlineEffect.beforeRender()` (depth renderer + Sobel post-process) (if Outlines on) → `labelRenderer.render()` (CSS2D name tags).
 - **Update order slots:** named in `enums/UpdateOrder.ts` - `CharacterPhysics → VehiclePhysics → Input → Camera → Environment → Scenarios → World → Audio → Prompts → Labels → PostCamera`. Spaced by 10 so new slots can squeeze between two existing ones without renumbering.
 - **Pause:** `world.setTimeScale(0)` freezes everything. `PauseMenu` uses this; `SettingsModal` adjusts `params.Master_Volume` etc. through lil-gui controllers so existing onChange handlers fire.
 - **Updatables:** anything visible (Ocean, Grass, Speaker, RaceContent, ProximityPrompt, Sky, Character, Vehicle, WanderingAnimals, etc.) implements `IUpdatable` and is registered via `world.registerUpdatable()` (or `world.add()` which also registers).

@@ -11,11 +11,13 @@
 
 # 📒 Sketchbook
 
-A maintained extension of the original [swift502/Sketchbook](https://github.com/swift502) - a small web-based game engine on [three.js](https://github.com/mrdoob/three.js) and [cannon-es](https://github.com/pmndrs/cannon-es) with a focus on third-person controls, vehicles and scripted scenarios.
+A maintained extension of the original [swift502/Sketchbook](https://github.com/swift502) - a small web-based game engine with a focus on third-person controls, vehicles and scripted scenarios - here as the **Babylon.js edition**: rendering, scene graph, physics and spatial audio run on [Babylon.js](https://www.babylonjs.com/) and [Havok Physics](https://www.babylonjs.com/havok/) instead of the upstream line's [three.js](https://github.com/mrdoob/three.js) + [cannon-es](https://github.com/pmndrs/cannon-es).
 
-This fork pulls in the features from later community forks that I felt were worth keeping, rebuilds the project on current tooling (TypeScript, three.js r183, webpack 5; dependency baseline as of **1 May 2026**) and exposes everything through one engine. See the [project timeline](#project-timeline) for who did what.
+This fork pulls in the features from later community forks that I felt were worth keeping, rebuilds the project on current tooling (TypeScript, Babylon.js 9, webpack 5; dependency baseline as of **1 May 2026**, Babylon port September 2026) and exposes everything through one engine. See the [project timeline](#project-timeline) for who did what.
 
-> **Also available as a Nuxt 4 + Vue 3 SFC port:** [`manuelhintermayr/sketchbook-nuxt`](https://github.com/manuelhintermayr/sketchbook-nuxt) is a 1:1 port of this repo where the DOM/CSS-by-hand UI shell was rebuilt with Vue components, the lil-gui controls became reactive composables, and `localStorage` plumbing landed in `useUserPrefs` / `useEngineParams`. The engine itself (World, Character, Vehicle, Sky, Ocean…) is byte-for-byte identical.
+> **This is the Babylon.js + Havok port:** [`manuelhintermayr/sketchbook-babylon`](https://github.com/manuelhintermayr/sketchbook-babylon) is a full port of [`sketchbook-upgraded`](https://github.com/manuelhintermayr/sketchbook-upgraded) (three.js + cannon-es) to Babylon.js 9 + Havok. Same maps, vehicles, characters, scenarios, audio and UI; the renderer, scene-graph plumbing, physics wrappers (colliders, raycast vehicle, character capsule) and the 3D-audio spatializer were rewritten on Babylon. The three.js original stays maintained upstream; a cannon-es → Rapier variant of the three.js line lives at [`sketchbook-rapier`](https://github.com/manuelhintermayr/sketchbook-rapier).
+>
+> **Also available as a Nuxt 4 + Vue 3 SFC port (three.js line):** [`manuelhintermayr/sketchbook-nuxt`](https://github.com/manuelhintermayr/sketchbook-nuxt) is a 1:1 port of this repo where the DOM/CSS-by-hand UI shell was rebuilt with Vue components, the lil-gui controls became reactive composables, and `localStorage` plumbing landed in `useUserPrefs` / `useEngineParams`. The engine itself (World, Character, Vehicle, Sky, Ocean…) is byte-for-byte identical.
 
 ## Features
 
@@ -29,11 +31,11 @@ This fork pulls in the features from later community forks that I felt were wort
 - 3D positional audio sources ("Speaker") with browser-autoplay handling.
 - Procedural engine sound per vehicle (sawtooth + square exhaust + filtered noise intake; per-type profiles for car / heli / airplane / boat / rocket); RPM scales with chassis speed.
 - Procedural ambient soundscape - wind (filtered noise) and water (LFO-swept bandpass), water gated to camera proximity (only audible within 10 m of the ocean's y-level).
-- Per-character positional SFX: footsteps (walk + sprint cadence), jump kickoff, landing thump (force-scaled), door clunk - each character (player + NPCs) carries its own THREE.PositionalAudio so steps fade with distance instead of playing flat.
+- Per-character positional SFX: footsteps (walk + sprint cadence), jump kickoff, landing thump (force-scaled), door clunk - each character (player + NPCs) carries its own positional Web Audio source (a `PannerNode` wrapper) so steps fade with distance instead of playing flat.
 - Procedural sound-effects bus for the player-UI events: race checkpoint ping + lap fanfare, dialog whoosh, prompt + pause UI ticks, iris-transition whoosh, vehicle crash (impact-throttled), rocket-liftoff boom. All signal-generated, no asset files.
 - Bundled background music - looped shuffle through three tracks generated with [Suno AI](https://suno.com/), gated by `Background_Music` and scaled by `Master_Volume * Music_Volume`.
-- One **Master Audio** mute switch (toggleable from the title screen, the Settings modal, and the debug panel - all three mirror through localStorage). When off every audio source goes silent: continuous synths via the master-volume helper, 3D-positional sources via the THREE listener gain. Music + sound-effects can each be muted independently when master is on.
-- Variable timescale, FXAA, cascaded shadow maps, adjustable gravity (0–2×).
+- One **Master Audio** mute switch (toggleable from the title screen, the Settings modal, and the debug panel - all three mirror through localStorage). When off every audio source goes silent: continuous synths via the master-volume helper, 3D-positional sources via the audio listener gain. Music + sound-effects can each be muted independently when master is on.
+- Variable timescale, FXAA, cascaded shadow maps (Babylon `CascadedShadowGenerator`), adjustable gravity (0–2×).
 - Camera shake on vehicle hard landings (sineNoise-based, three presets: collision / land / boost).
 - All settings persist to `localStorage` with a one-click reset.
 - Iris-wipe transition (CSS clip-path circle, 700ms) when switching maps, restarting a scenario, or reloading from the pause menu.
@@ -43,12 +45,12 @@ This fork pulls in the features from later community forks that I felt were wort
 
 - Third-person camera, raycast capsule controller, full state machine (Sprint, Walk, Idle, Jump, Falling, Drop variants…).
 - AI path-following - same convention used by both the AI vehicle drivers and standing/wandering NPCs.
-- Name labels float above every character via a CSS2D pass; the player is tagged "You" / "Du" / "Tú" depending on the locale and stands out in blue.
+- Name labels float above every character via a DOM label pass; the player is tagged "You" / "Du" / "Tú" depending on the locale and stands out in blue.
 - Two example NPCs walk a small loop at the default spawn, two more flank the player on idle.
-- Wandering dogs & cats around the spawn area (1 dog + 2 cats, kept calm by design), with hierarchical low-poly models (per-limb walk / run / jump / idle-breathe animation), procedural voices (bark / meow / purr-loop near tamed cats), and dynamic cannon-sphere bodies so they collide with the player and each other. Dogs notice and bark, cats flee, both can be tamed; tame pets follow the player and turn to track them.
-- Flying birds with per-bird positional FM-chirp audio (cat-game-style orbit motion, sin-flap wings, kinematic cannon body) - chirps fade with distance from each bird, replacing the old global ambient bird-chirp.
-- Ambient butterflies on a Lissajous drift around the player, distance-culled at 30 m, kinematic cannon body so debug-physics shows them.
-- Distance-culled CSS2D world labels via a central registry - one **Labels** toggle controls every floating tag (player, NPC names, dogs and cats - all translated through i18n); hides past 10 m to keep the UI quiet at distance.
+- Wandering dogs & cats around the spawn area (1 dog + 2 cats, kept calm by design), with hierarchical low-poly models (per-limb walk / run / jump / idle-breathe animation), procedural voices (bark / meow / purr-loop near tamed cats), and dynamic Havok sphere bodies so they collide with the player and each other. Dogs notice and bark, cats flee, both can be tamed; tame pets follow the player and turn to track them.
+- Flying birds with per-bird positional FM-chirp audio (cat-game-style orbit motion, sin-flap wings, animated Havok body) - chirps fade with distance from each bird, replacing the old global ambient bird-chirp.
+- Ambient butterflies on a Lissajous drift around the player, distance-culled at 30 m, animated Havok body so debug-physics shows them.
+- Distance-culled DOM world labels via a central registry - one **Labels** toggle controls every floating tag (player, NPC names, dogs and cats - all translated through i18n); hides past 10 m to keep the UI quiet at distance.
 
 ### Vehicles
 
@@ -79,7 +81,7 @@ This fork pulls in the features from later community forks that I felt were wort
 	- `sketchbook v0.3 (socketControl)` - the swift502 v0.3 sandbox map (race tracks, ramps, runways, helipad), with later socketControl tweaks layered on
 	- `sketchbook v0.4 (socketControl)` - the swift502 v0.4 final map, again with socketControl additions
 	- Four code-built sandboxes from socketControl: `test`, `test2`, `test3`, `example` (TypeScript, editable directly)
-- Compatibility with the [official three.js editor](https://threejs.org/editor/) - the sandbox project file is vendored under `ThreejsEditor/`.
+- The upstream sandbox project file for the [three.js editor](https://threejs.org/editor/) is still vendored under `ThreejsEditor/` for reference; the Babylon edition doesn't consume it.
 
 ### Authoring & extensibility
 
@@ -89,7 +91,7 @@ Map markers in `userData` light up code-side features automatically:
 |---|---|
 | `material.name === 'grass'` | Instanced grass field |
 | `userData.data === 'speaker'` + `audio` | 3D positional audio source |
-| `userData.type === 'cylinder'` | CANNON cylinder collider |
+| `userData.type === 'cylinder'` | Havok cylinder collider |
 | `userData.type === 'shape'` + `subtype: box`/`sphere` | Dynamic physics primitive |
 | `userData.type === 'npc'` / `character_ai` / `character_follow` | Standing or path-following NPC |
 
@@ -107,17 +109,22 @@ Sketchbook needs to run on a local server (e.g. `npm run dev`) to load assets.
 ```html
 <script src="sketchbook.min.js"></script>
 <script>
-	const world = new Sketchbook.World('scene.glb');
-	// or pass a sandbox instance:
-	// const world = new Sketchbook.World(new Sketchbook.Test3Scene());
+	// Havok ships as WebAssembly - wait for it before building a World.
+	Sketchbook.initPhysics().then(() => {
+		const world = new Sketchbook.World('scene.glb');
+		// or pass a sandbox factory that builds against the World's scene:
+		// const world = new Sketchbook.World((scene) => new Sketchbook.Test3Scene(scene));
+	});
 </script>
 ```
+
+`build/HavokPhysics.wasm` is emitted next to the bundle by webpack and fetched at runtime, so serve the `build/` folder as a whole.
 
 ## Running locally
 
 1. Install a current LTS version of [Node.js](https://nodejs.org/en/).
 2. `npm install`
-3. `npm run build` - required before the first `npm run dev` because `build/sketchbook.min.js` is no longer committed.
+3. `npm run build` - required before the first `npm run dev` because `build/sketchbook.min.js` (and the `HavokPhysics.wasm` next to it) are not committed.
 4. `npm run dev` and open <http://localhost:8080>.
 5. `npm run lint` to run ESLint over `src/ts/`.
 
@@ -135,6 +142,10 @@ Beyond this README, the repo carries a handful of complementary docs - pick the 
 ---
 
 # Project timeline
+
+## September 2026 - Babylon.js + Havok edition ([manuelhintermayr](https://github.com/manuelhintermayr))
+
+Full port of the 0.8.0 code base from three.js + cannon-es to Babylon.js 9 + Havok Physics, done as a separate repository (`claude/babylon-migration` on top of the `claude/external-features` baseline snapshot). Gameplay, maps, scenarios, UI, i18n and the procedural audio are unchanged; what was rewritten is the layer underneath: `World` + `RendererPipeline` on a Babylon `Engine`/`Scene` (right-handed, ACES tone mapping, FXAA post-process, `CascadedShadowGenerator`, `DepthRenderer` + post-process outline), `Sky` on `SkyMaterial` with custom star / moon-outline meshes, `Ocean` as a `PBRCustomMaterial` wave shader, `Grass` as instanced `VertexBuffer`s on a `ShaderMaterial`, glTF loading through `@babylonjs/loaders` with userData carried in `metadata`, a small DOM `LabelRenderer` replacing `CSS2DRenderer`, and a plain Web Audio spatializer (`SpatialAudio.ts`) replacing `THREE.AudioListener` / `PositionalAudio`. Physics runs on Babylon's Physics V2 API over Havok: manual stepping with pre/post-step listeners, collider wrappers on `PhysicsBody` + `PhysicsShape*`, the character capsule with locked rotation, and a port of cannon-es's `RaycastVehicle` (Bullet's `btRaycastVehicle`) on top of Havok bodies so cars, boats, helicopters, airplanes and the rocket keep their tuning values. three's `CatmullRomCurve3` was ported for the race curves; the swift502 credits sign was converted from FBX to GLB with Blender.
 
 > **Attribution policy:** every port below tries to preserve the original commits or at least the original authors via `git format-patch` / `git am` or `git commit --author="…" --date="…"`. The intent is to honour each upstream author's work - and only their work - in `git log`.
 >
