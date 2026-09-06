@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Vector3 } from '@babylonjs/core';
 
 import {
 	AnimalBehavior,
@@ -9,14 +9,14 @@ import {
 
 // Module-scoped scratch vector - reused across every cat update each
 // frame to dodge per-call Vector3 allocations.
-const _toPlayer = new THREE.Vector3();
+const _toPlayer = new Vector3();
 
 // Cat state machine: idle → player too close → flee in the radial-out
 // direction → calm down. Repeated player encounters tip the cat into
 // 'tame' (handled by AnimalBehavior.updateTame).
 class CatBehavior extends AnimalBehavior
 {
-	public update(cat: Animal, playerDist: number, playerPos: THREE.Vector3): void
+	public update(cat: Animal, playerDist: number, playerPos: Vector3): void
 	{
 		if (this.isTame(cat))
 		{
@@ -36,7 +36,7 @@ class CatBehavior extends AnimalBehavior
 			cat.pendingVoice = 'meow';
 			// Face the player while meowing - heading set so the head
 			// turns toward the camera before bolting.
-			_toPlayer.subVectors(playerPos, cat.position);
+			playerPos.subtractToRef(cat.position, _toPlayer);
 			_toPlayer.y = 0;
 			cat.heading = Math.atan2(_toPlayer.x, _toPlayer.z);
 			return;
@@ -48,9 +48,9 @@ class CatBehavior extends AnimalBehavior
 			cat.state = 'flee';
 			cat.stateTimer = 3 + Math.random() * 2;
 			cat.interactionCount++;
-			_toPlayer.subVectors(cat.position, playerPos);
+			cat.position.subtractToRef(playerPos, _toPlayer);
 			_toPlayer.y = 0;
-			_toPlayer.normalize().multiplyScalar(40);
+			_toPlayer.normalize().scaleInPlace(40);
 			cat.target.set(cat.position.x + _toPlayer.x, 0, cat.position.z + _toPlayer.z);
 			return;
 		}

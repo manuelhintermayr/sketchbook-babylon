@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Color3, Mesh, MeshBuilder, Scene, StandardMaterial, TransformNode } from '@babylonjs/core';
 
 // Shared types + colour schemes + low-level mesh helpers used by the
 // per-species builders (CatBuilder, DogBuilder) and the per-frame
@@ -34,20 +34,20 @@ export const DOG_SCHEMES: ColorScheme[] =
 ];
 
 // Common contract every animal model satisfies. WanderingAnimals only
-// reaches into these named handles - never the raw Three children -
-// so the cat / dog implementations stay swappable.
+// reaches into these named handles - never the raw scene-graph
+// children - so the cat / dog implementations stay swappable.
 export interface AnimalModel
 {
-	group: THREE.Group;
-	body: THREE.Group;
-	head: THREE.Group;
-	tail: THREE.Object3D[];
+	group: TransformNode;
+	body: TransformNode;
+	head: TransformNode;
+	tail: TransformNode[];
 	legs: { fl: AnimalLeg; fr: AnimalLeg; bl: AnimalLeg; br: AnimalLeg };
-	ears: { left: THREE.Object3D; right: THREE.Object3D };
+	ears: { left: TransformNode; right: TransformNode };
 	// Mouth-open mesh for voice animation. Hidden by default
-	// (scale.y ≈ 0); the animator scales it up while voiceFraction > 0
+	// (scaling.y ≈ 0); the animator scales it up while voiceFraction > 0
 	// so meowing cats and barking dogs visibly open their mouth.
-	mouthOpen: THREE.Mesh;
+	mouthOpen: Mesh;
 	// Resting body Y inside the parent group (so idle breath returns
 	// to it and walk-cycle bobs around it).
 	restY: number;
@@ -57,8 +57,8 @@ export interface AnimalModel
 // The animator rotates these about the X axis to drive the gait.
 export interface AnimalLeg
 {
-	thigh: THREE.Object3D;
-	shin: THREE.Object3D;
+	thigh: TransformNode;
+	shin: TransformNode;
 }
 
 // Y-shift inside the species group so the lowest paw sits at the
@@ -69,49 +69,106 @@ export interface AnimalLeg
 // just plant the root at ground without manual offsets per kind.
 export const FOOT_OFFSET = 0.42;
 
-// Shared standard-material factory. Builders + the animator use this
-// instead of constructing materials inline so flatShading + roughness
-// stay consistent across cat, dog, eye-shine, mouth-open meshes.
-export function mat(color: number): THREE.MeshStandardMaterial
+// Shared matte-material factory. Builders + the animator use this
+// instead of constructing materials inline so the flat, low-specular
+// look stays consistent across cat, dog, eye-shine, mouth-open meshes.
+export function mat(scene: Scene, color: number): StandardMaterial
 {
-	return new THREE.MeshStandardMaterial({ color, roughness: 0.85, flatShading: true });
+	const material = new StandardMaterial('animal', scene);
+	material.diffuseColor = Color3.FromHexString('#' + color.toString(16).padStart(6, '0'));
+	material.specularColor.set(0.05, 0.05, 0.05);
+	return material;
 }
 
-// Pre-built materials reused for every animal: the pupil black and
-// the eye-shine white. Constructing once and sharing avoids GPU
-// material churn across N cats × M dogs.
-export const BLACK_MAT = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9, flatShading: true });
-export const EYE_WHITE_MAT = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.6, flatShading: true });
+// Pupil black and eye-shine white, built once per scene and shared
+// across every animal to avoid material churn across N cats x M dogs.
+const sharedMaterials = new WeakMap<Scene, { black: StandardMaterial; eyeWhite: StandardMaterial }>();
 
-export function applyShadow(obj: THREE.Object3D): void
+function shared(scene: Scene): { black: StandardMaterial; eyeWhite: StandardMaterial }
 {
-	obj.traverse((child) =>
+	let entry = sharedMaterials.get(scene);
+	if (entry === undefined)
 	{
-		if ((child as THREE.Mesh).isMesh)
-		{
-			child.castShadow = true;
-			child.receiveShadow = true;
-		}
-	});
+		entry = { black: mat(scene, 0x111111), eyeWhite: mat(scene, 0xffffff) };
+		entry.eyeWhite.specularColor.set(0.3, 0.3, 0.3);
+		sharedMaterials.set(scene, entry);
+	}
+	return entry;
 }
 
-export function makeLeg(furMat: THREE.MeshStandardMaterial, lightMat: THREE.MeshStandardMaterial, x: number, z: number): AnimalLeg
+export function blackMat(scene: Scene): StandardMaterial
 {
-	const thigh = new THREE.Group();
-	thigh.position.set(x, 0.65, z);
-	const upper = new THREE.Mesh(new THREE.BoxGeometry(0.27, 0.5, 0.27), furMat);
-	upper.position.y = -0.25;
-	thigh.add(upper);
+	return shared(scene).black;
+}
 
-	const shin = new THREE.Group();
+export function eyeWhiteMat(scene: Scene): StandardMaterial
+{
+	return shared(scene).eyeWhite;
+}
+
+export function group(scene: Scene, name: string, parent?: TransformNode): TransformNode
+{
+	const node = new TransformNode(name, scene);
+	if (parent !== undefined) node.parent = parent;
+	return node;
+}
+
+export function box(scene: Scene, parent: TransformNode, width: number, height: number, depth: number, material: StandardMaterial): Mesh
+{
+	const mesh = MeshBuilder.CreateBox('box', { width, height, depth }, scene);
+	mesh.material = material;
+	mesh.parent = parent;
+	mesh.isPickable = false;
+	return mesh;
+}
+
+// three's SphereGeometry(radius, widthSegments, heightSegments); the
+// builders flat-shade these so tiny eyes read as faceted low-poly.
+export function sphere(scene: Scene, parent: TransformNode, radius: number, segments: number, material: StandardMaterial): Mesh
+{
+	const mesh = MeshBuilder.CreateSphere('sphere', { diameter: radius * 2, segments }, scene);
+	mesh.convertToFlatShadedMesh();
+	mesh.material = material;
+	mesh.parent = parent;
+	mesh.isPickable = false;
+	return mesh;
+}
+
+// three's ConeGeometry(radius, height, radialSegments) - apex up.
+export function cone(scene: Scene, parent: TransformNode, radius: number, height: number, tessellation: number, material: StandardMaterial): Mesh
+{
+	const mesh = MeshBuilder.CreateCylinder('cone', { diameterTop: 0, diameterBottom: radius * 2, height, tessellation }, scene);
+	mesh.convertToFlatShadedMesh();
+	mesh.material = material;
+	mesh.parent = parent;
+	mesh.isPickable = false;
+	return mesh;
+}
+
+// Receive-side shadow flag for every mesh under the node. Casting is
+// registered by the manager through Sky.registerShadowCaster once the
+// group is in the world.
+export function applyShadow(node: TransformNode): void
+{
+	for (const mesh of node.getChildMeshes(false))
+	{
+		mesh.receiveShadows = true;
+	}
+}
+
+export function makeLeg(scene: Scene, furMat: StandardMaterial, lightMat: StandardMaterial, x: number, z: number): AnimalLeg
+{
+	const thigh = group(scene, 'thigh');
+	thigh.position.set(x, 0.65, z);
+	const upper = box(scene, thigh, 0.27, 0.5, 0.27, furMat);
+	upper.position.y = -0.25;
+
+	const shin = group(scene, 'shin', thigh);
 	shin.position.y = -0.5;
-	thigh.add(shin);
-	const lower = new THREE.Mesh(new THREE.BoxGeometry(0.23, 0.45, 0.23), furMat);
+	const lower = box(scene, shin, 0.23, 0.45, 0.23, furMat);
 	lower.position.y = -0.225;
-	shin.add(lower);
-	const paw = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.14, 0.36), lightMat);
+	const paw = box(scene, shin, 0.28, 0.14, 0.36, lightMat);
 	paw.position.set(0, -0.5, 0.04);
-	shin.add(paw);
 
 	return { thigh, shin };
 }
@@ -120,27 +177,22 @@ export function makeLeg(furMat: THREE.MeshStandardMaterial, lightMat: THREE.Mesh
 // Each segment is the child of the previous one, so a rotation on
 // segment N propagates to N+1..N+last - same chain the cat-game
 // animator uses for the slow tail sway.
-export function makeTail(parent: THREE.Object3D, segCount: number, rootY: number, rootZ: number, baseSize: number,
-	furMat: THREE.MeshStandardMaterial, darkMat: THREE.MeshStandardMaterial, tipMat: THREE.MeshStandardMaterial): THREE.Object3D[]
+export function makeTail(scene: Scene, parent: TransformNode, segCount: number, rootY: number, rootZ: number, baseSize: number,
+	furMat: StandardMaterial, darkMat: StandardMaterial, tipMat: StandardMaterial): TransformNode[]
 {
-	const root = new THREE.Group();
+	const root = group(scene, 'tailRoot', parent);
 	root.position.set(0, rootY, rootZ);
-	parent.add(root);
 
-	const segs: THREE.Object3D[] = [];
-	let p: THREE.Object3D = root;
+	const segs: TransformNode[] = [];
+	let p: TransformNode = root;
 	for (let i = 0; i < segCount; i++)
 	{
-		const seg = new THREE.Group();
+		const seg = group(scene, 'tailSeg', p);
 		seg.position.z = i === 0 ? -0.05 : -0.27;
 		const size = baseSize - i * 0.022;
-		const segMesh = new THREE.Mesh(
-			new THREE.BoxGeometry(size, size, 0.28),
-			i === segCount - 1 ? tipMat : (i % 2 === 0 ? furMat : darkMat),
-		);
+		const segMesh = box(scene, seg, size, size, 0.28,
+			i === segCount - 1 ? tipMat : (i % 2 === 0 ? furMat : darkMat));
 		segMesh.position.z = -0.14;
-		seg.add(segMesh);
-		p.add(seg);
 		segs.push(seg);
 		p = seg;
 	}

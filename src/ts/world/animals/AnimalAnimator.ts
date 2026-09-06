@@ -29,7 +29,7 @@ type LegKey = 'fl' | 'fr' | 'bl' | 'br';
 function applyJumpPose(model: AnimalModel, velocityY: number): void
 {
 	model.body.position.y = model.restY;
-	model.body.scale.set(1, 1, 1);
+	model.body.scaling.set(1, 1, 1);
 	model.body.rotation.x = velocityY > 0 ? -0.12 : 0.18;
 	const tuck = velocityY > 0;
 	for (const k in model.legs)
@@ -40,14 +40,14 @@ function applyJumpPose(model: AnimalModel, velocityY: number): void
 	}
 	model.head.rotation.x = velocityY > 0 ? -0.18 : 0.12;
 	model.head.rotation.y *= 0.85;
-	model.mouthOpen.scale.y = 0.001;
+	model.mouthOpen.scaling.y = 0.001;
 	for (const seg of model.tail) seg.rotation.y *= 0.85;
 }
 
 function applyIdlePose(model: AnimalModel, t: number, isDog: boolean, voiceFraction: number): void
 {
 	const breath = Math.sin(t * 1.6) * (isDog ? 0.03 : 0.025);
-	model.body.scale.set(1 + breath, 1 + breath, 1 + breath * 0.5);
+	model.body.scaling.set(1 + breath, 1 + breath, 1 + breath * 0.5);
 	model.body.position.y = model.restY;
 	model.body.rotation.x *= 0.85;
 
@@ -181,7 +181,7 @@ export function applyAnimalAnimation(model: AnimalModel, opts: AnimalAnimationOp
 	// a hard pop. Cats hold mouth open for the full meow; dogs jaw-
 	// snap on each bark - same fade approximation works for both
 	// (synth duration ~0.45 s, voiceFraction handles the timing).
-	model.mouthOpen.scale.y = voiceFraction > 0
+	model.mouthOpen.scaling.y = voiceFraction > 0
 		? Math.max(0.001, voiceFraction)
 		: 0.001;
 
@@ -201,7 +201,7 @@ export function applyAnimalAnimation(model: AnimalModel, opts: AnimalAnimationOp
 
 	model.head.rotation.y *= 0.85;
 	model.head.rotation.x = Math.sin(c) * 0.03;
-	model.body.scale.set(1, 1, 1);
+	model.body.scaling.set(1, 1, 1);
 
 	// `speed` arg unused right now but kept on the signature: future
 	// tweaks (paw-step audio, anim-blend factor) will read it.

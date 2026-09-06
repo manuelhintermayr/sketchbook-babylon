@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import { Vector3 } from '@babylonjs/core';
 
 import {
 	AnimalBehavior,
@@ -10,14 +10,14 @@ import {
 
 // Module-scoped scratch vector - reused across every dog update each
 // frame to dodge per-call Vector3 allocations.
-const _toPlayer = new THREE.Vector3();
+const _toPlayer = new Vector3();
 
 // Dog state machine: idle → notice player → approach → bark → give up
 // or dis-engage. Repeated player encounters tip the dog into 'tame'
 // (handled by AnimalBehavior.updateTame).
 class DogBehavior extends AnimalBehavior
 {
-	public update(dog: Animal, playerDist: number, playerPos: THREE.Vector3): void
+	public update(dog: Animal, playerDist: number, playerPos: Vector3): void
 	{
 		if (this.isTame(dog))
 		{
@@ -52,7 +52,7 @@ class DogBehavior extends AnimalBehavior
 			{
 				dog.state = 'wander';
 				dog.stateTimer = 3;
-				dog.target.copy(dog.homePosition);
+				dog.target.copyFrom(dog.homePosition);
 			}
 		}
 
@@ -60,7 +60,7 @@ class DogBehavior extends AnimalBehavior
 		{
 			// Stay at bark distance - chase if the player drifts away,
 			// hold position + face the player if already in range.
-			_toPlayer.subVectors(playerPos, dog.position);
+			playerPos.subtractToRef(dog.position, _toPlayer);
 			_toPlayer.y = 0;
 			const dist = _toPlayer.length();
 			if (dist > DOG_BARK_DIST)
@@ -81,7 +81,7 @@ class DogBehavior extends AnimalBehavior
 			{
 				dog.state = 'wander';
 				dog.stateTimer = 3;
-				dog.target.copy(dog.homePosition);
+				dog.target.copyFrom(dog.homePosition);
 			}
 
 			if (dog.stateTimer <= 0)

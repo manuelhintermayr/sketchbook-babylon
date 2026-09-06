@@ -1,8 +1,9 @@
-import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
+import { Observer, PhysicsBody, TransformNode, Vector3 } from '@babylonjs/core';
+import type { IPhysicsCollisionEvent } from '@babylonjs/core';
 
 import { AnimalModel } from './AnimalModels';
 import { VoiceKind } from '../audio/AnimalVoices';
+import { SphereCollider } from '../../physics/colliders/SphereCollider';
 
 // Domain definition for the wandering-animals system: the data each
 // animal carries each frame, the state-machine alphabet, the tuning
@@ -24,7 +25,7 @@ export type AnimalState = 'idle' | 'wander' | 'flee' | 'approach' | 'bark' | 'ta
 export const MEOW_DURATION = 0.7;
 
 // Initial vertical velocity applied to the animal body at jump
-// kickoff. Combined with cannon's world gravity (-9.81) this gives a
+// kickoff. Combined with the world gravity (-9.81) this gives a
 // hang-time around 0.5 s and a peak height ~0.4 m above the ground
 // (multiplied down by the per-animal scale).
 export const JUMP_KICK = 4.0;
@@ -61,26 +62,27 @@ export const TAME_FOLLOW_SPEED = 3.8;
 // walk speed - leg-cycle anim was tuned against this value.
 export const WANDER_SPEED = 3.8;
 
+const _jumpVelocity = new Vector3();
+
 export interface Animal
 {
 	kind: AnimalKind;
-	position: THREE.Vector3;
-	velocity: THREE.Vector3;
+	position: Vector3;
+	velocity: Vector3;
 	heading: number;
 	state: AnimalState;
 	stateTimer: number;
-	target: THREE.Vector3;
+	target: Vector3;
 	animPhase: number;
 	scale: number;
 	interactionCount: number;
-	homePosition: THREE.Vector3;
-	// Empty Object3D added to graphicsWorld; its position is updated
-	// each frame to match the instanced animal so its CSS2D label
-	// follows along. The label itself lives as a child of this anchor.
-	labelAnchor: THREE.Object3D;
-	// Off-map detection throttle. Body y is now driven by cannon, but
-	// we still raycast the terrain occasionally to spot animals that
-	// have wandered off the trimesh (no contact = falling forever) and
+	homePosition: Vector3;
+	// Empty node in the scene; its position is updated each frame to
+	// match the animal so its screen-projected label follows along.
+	labelAnchor: TransformNode;
+	// Off-map detection throttle. Body y is driven by Havok, but we
+	// still raycast the terrain occasionally to spot animals that have
+	// wandered off the trimesh (no contact = falling forever) and
 	// redirect them home before they're lost.
 	groundQueryTimer: number;
 	// Strategy reference - DOG_BEHAVIOR or CAT_BEHAVIOR singleton from
@@ -102,24 +104,26 @@ export interface Animal
 	// Seconds of mouth-animation remaining for the active voice.
 	// Counts down each frame; while > 0 the model's mouth opens.
 	voiceTimer: number;
-	// Cannon dynamic body for collision against the player capsule,
+	// Dynamic sphere body for collision against the player capsule,
 	// the trimesh terrain, and other animal bodies. Manager writes
-	// the AI's desired horizontal velocity into body.velocity.x/z
-	// each frame and reads body.position back into animal.position.
-	body: CANNON.Body;
-	// 'collide' listener reference, stashed so removeFromWorld can
-	// detach it. Without an explicit removeEventListener, the closure
-	// keeps the animal pinned in memory across scenario switches.
-	collideListener: ((e: any) => void) | undefined;
+	// the AI's desired horizontal velocity into the body velocity
+	// each frame and reads the body node position back into
+	// animal.position.
+	collider: SphereCollider;
+	body: PhysicsBody;
+	// Collision observer, stashed so removeFromWorld can detach it.
+	// Without an explicit remove, the closure keeps the animal pinned
+	// in memory across scenario switches.
+	collideObserver: Observer<IPhysicsCollisionEvent> | null;
 	// True while a jump is in flight (kick fired, gravity acting,
 	// no collision with ground yet). Decoupled from the state machine
 	// so a behaviour transition mid-jump (e.g. dog notices player and
 	// flips to bark) doesn't strand vertical physics in an
 	// inconsistent state.
 	airborne: boolean;
-	// Cached body radius. Manager subtracts it from body.position.y
-	// before placing the visual root so the model's foot offset lands
-	// the paws on the ground (cannon's sphere body sits with its
+	// Cached body radius. Manager subtracts it from the body position
+	// y before placing the visual root so the model's foot offset
+	// lands the paws on the ground (the sphere body sits with its
 	// centre 1 radius above the contact point).
 	bodyRadius: number;
 }
@@ -157,7 +161,7 @@ export function targetSpeedFor(state: AnimalState): number
 
 export abstract class AnimalBehavior
 {
-	public abstract update(animal: Animal, playerDist: number, playerPos: THREE.Vector3): void;
+	public abstract update(animal: Animal, playerDist: number, playerPos: Vector3): void;
 
 	protected isTame(animal: Animal): boolean
 	{
@@ -176,7 +180,9 @@ export abstract class AnimalBehavior
 			animal.state = 'jump';
 			animal.stateTimer = 1.5;
 			animal.airborne = true;
-			animal.body.velocity.y = JUMP_KICK;
+			animal.body.getLinearVelocityToRef(_jumpVelocity);
+			_jumpVelocity.y = JUMP_KICK;
+			animal.body.setLinearVelocity(_jumpVelocity);
 			return;
 		}
 		if (Math.random() < 0.5)
@@ -205,7 +211,7 @@ export abstract class AnimalBehavior
 	protected updateTame(
 		animal: Animal,
 		playerDist: number,
-		playerPos: THREE.Vector3,
+		playerPos: Vector3,
 		giveUpDist: number,
 	): void
 	{

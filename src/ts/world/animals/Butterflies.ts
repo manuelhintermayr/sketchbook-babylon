@@ -1,5 +1,4 @@
-import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
+import { Color3, Mesh, MeshBuilder, PhysicsMotionType, PhysicsPrestepType, Scene, StandardMaterial, TransformNode, Vector3 } from '@babylonjs/core';
 
 import { World } from '../World';
 import { IWorldEntity } from '../../interfaces/IWorldEntity';
@@ -7,10 +6,9 @@ import { EntityType } from '../../enums/EntityType';
 import { UpdateOrder } from '../../enums/UpdateOrder';
 import { CollisionGroups } from '../../enums/CollisionGroups';
 import { mulberry32 } from '../../core/FunctionLibrary';
+import { SphereCollider } from '../../physics/colliders/SphereCollider';
 
-// Ambient butterflies. Pure visual decoration - no audio, no physics
-// body (they're too small to read as physical contact, and a kinematic
-// sphere on top would just thrash the cannon broadphase). Pattern
+// Ambient butterflies. Pure visual decoration - no audio. Pattern
 // adapted from the low-poly-cat-game butterfly: each butterfly is a
 // little 2-wing + body group drifting on a Lissajous-style path with
 // a sin-modulated wing flap.
@@ -26,7 +24,7 @@ const BUTTERFLY_COUNT = 2;
 // butterfly size that doesn't dominate the camera at player scale.
 const BUTTERFLY_SCALE = 0.45;
 
-// Kinematic cannon sphere radius. Sized to roughly the visible
+// Animated body sphere radius. Sized to roughly the visible
 // silhouette so debug-physics actually shows them and a butterfly
 // brushing the player capsule reads as contact instead of clipping.
 const BUTTERFLY_BODY_RADIUS = 0.15;
@@ -62,16 +60,16 @@ const FLAP_SPEED_RANGE = 8;
 
 // Distance cull. Butterflies are tiny and only useful as peripheral
 // detail; past 30 m the wing geometry covers less than a pixel and
-// is just CSM + post-FX overhead.
+// is just shadow + post-FX overhead.
 const CULL_DISTANCE = 30;
 const CULL_DISTANCE_SQ = CULL_DISTANCE * CULL_DISTANCE;
 
 interface Butterfly
 {
-	group: THREE.Group;
-	leftWing: THREE.Mesh;
-	rightWing: THREE.Mesh;
-	body: CANNON.Body;
+	group: TransformNode;
+	leftWing: Mesh;
+	rightWing: Mesh;
+	collider: SphereCollider;
 	cx: number;
 	cz: number;
 	cy: number;
@@ -84,35 +82,46 @@ interface Butterfly
 
 interface ButterflyMesh
 {
-	group: THREE.Group;
-	leftWing: THREE.Mesh;
-	rightWing: THREE.Mesh;
+	group: TransformNode;
+	leftWing: Mesh;
+	rightWing: Mesh;
 }
 
-function buildButterflyMesh(color: number): ButterflyMesh
+function buildButterflyMesh(scene: Scene, color: number): ButterflyMesh
 {
-	const group = new THREE.Group();
-	// DoubleSide so the wings don't disappear when the butterfly is
+	const group = new TransformNode('butterfly', scene);
+	// Double-sided so the wings don't disappear when the butterfly is
 	// banked or viewed edge-on - the geometry is paper-thin and the
 	// camera will frequently catch a wing's underside.
-	const wingMat = new THREE.MeshStandardMaterial({ color, flatShading: true, side: THREE.DoubleSide });
-	const bodyMat = new THREE.MeshStandardMaterial({ color: 0x222222, flatShading: true });
+	const wingMat = new StandardMaterial('butterflyWing', scene);
+	wingMat.diffuseColor = Color3.FromHexString('#' + color.toString(16).padStart(6, '0'));
+	wingMat.specularColor.set(0.05, 0.05, 0.05);
+	wingMat.backFaceCulling = false;
+	const bodyMat = new StandardMaterial('butterflyBody', scene);
+	bodyMat.diffuseColor = Color3.FromHexString('#222222');
+	bodyMat.specularColor.set(0.05, 0.05, 0.05);
 
-	const leftWing = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.02, 0.25), wingMat);
+	const leftWing = MeshBuilder.CreateBox('wing', { width: 0.3, height: 0.02, depth: 0.25 }, scene);
+	leftWing.material = wingMat;
+	leftWing.parent = group;
 	leftWing.position.x = -0.15;
-	group.add(leftWing);
+	leftWing.isPickable = false;
 
-	const rightWing = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.02, 0.25), wingMat);
+	const rightWing = MeshBuilder.CreateBox('wing', { width: 0.3, height: 0.02, depth: 0.25 }, scene);
+	rightWing.material = wingMat;
+	rightWing.parent = group;
 	rightWing.position.x = 0.15;
-	group.add(rightWing);
+	rightWing.isPickable = false;
 
-	const body = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.2), bodyMat);
-	group.add(body);
+	const body = MeshBuilder.CreateBox('body', { width: 0.05, height: 0.05, depth: 0.2 }, scene);
+	body.material = bodyMat;
+	body.parent = group;
+	body.isPickable = false;
 
 	return { group, leftWing, rightWing };
 }
 
-const _toCam = new THREE.Vector3();
+const _toCam = new Vector3();
 
 export class Butterflies implements IWorldEntity
 {
@@ -137,45 +146,40 @@ export class Butterflies implements IWorldEntity
 		for (let i = 0; i < BUTTERFLY_COUNT; i++)
 		{
 			const color = BUTTERFLY_PALETTE[Math.floor(rng() * BUTTERFLY_PALETTE.length)];
-			const meshes = buildButterflyMesh(color);
-			meshes.group.scale.setScalar(BUTTERFLY_SCALE);
-			world.graphicsWorld.add(meshes.group);
-			meshes.group.traverse((child) =>
-			{
-				const m = (child as THREE.Mesh).material;
-				if (m && (m as THREE.Material).isMaterial) world.sky.csm.setupMaterial(m as THREE.Material);
-			});
+			const meshes = buildButterflyMesh(world.scene, color);
+			meshes.group.scaling.setAll(BUTTERFLY_SCALE);
+			world.addNode(meshes.group);
+			world.sky.registerShadowCaster(meshes.group);
 
-			// Kinematic body, same idea as Birds: cannon sees the contact
-			// shape but never integrates motion - we drive position from
-			// the lissajous each frame.
-			const body = new CANNON.Body(
-			{
-				type: CANNON.Body.KINEMATIC,
-				shape: new CANNON.Sphere(BUTTERFLY_BODY_RADIUS),
-				position: new CANNON.Vec3(0, HEIGHT_MIN, 0),
+			// Animated body, same idea as Birds: Havok sees the contact
+			// shape but never integrates forces on it - we drive the
+			// position from the lissajous each frame, teleporting rather
+			// than sweeping so the first placement can't fling the player.
+			const collider = new SphereCollider(world.scene, {
+				radius: BUTTERFLY_BODY_RADIUS,
+				position: new Vector3(0, HEIGHT_MIN, 0),
 				collisionFilterGroup: CollisionGroups.Animals,
 				collisionFilterMask: CollisionGroups.Default | CollisionGroups.Characters
 					| CollisionGroups.TrimeshColliders | CollisionGroups.Animals,
 			});
-			body.allowSleep = false;
-			world.physicsWorld.addBody(body);
+			collider.body.setMotionType(PhysicsMotionType.ANIMATED);
+			collider.body.setPrestepType(PhysicsPrestepType.TELEPORT);
 
 			this.butterflies.push(
-			{
-				group: meshes.group,
-				leftWing: meshes.leftWing,
-				rightWing: meshes.rightWing,
-				body,
-				cx: (rng() - 0.5) * ORBIT_AREA,
-				cz: (rng() - 0.5) * ORBIT_AREA,
-				cy: HEIGHT_MIN + rng() * HEIGHT_RANGE,
-				ax: ORBIT_AMP_MIN + rng() * ORBIT_AMP_RANGE,
-				az: ORBIT_AMP_MIN + rng() * ORBIT_AMP_RANGE,
-				driftSpeed: DRIFT_SPEED_MIN + rng() * DRIFT_SPEED_RANGE,
-				phase: rng() * Math.PI * 2,
-				flapSpeed: FLAP_SPEED_MIN + rng() * FLAP_SPEED_RANGE,
-			});
+				{
+					group: meshes.group,
+					leftWing: meshes.leftWing,
+					rightWing: meshes.rightWing,
+					collider,
+					cx: (rng() - 0.5) * ORBIT_AREA,
+					cz: (rng() - 0.5) * ORBIT_AREA,
+					cy: HEIGHT_MIN + rng() * HEIGHT_RANGE,
+					ax: ORBIT_AMP_MIN + rng() * ORBIT_AMP_RANGE,
+					az: ORBIT_AMP_MIN + rng() * ORBIT_AMP_RANGE,
+					driftSpeed: DRIFT_SPEED_MIN + rng() * DRIFT_SPEED_RANGE,
+					phase: rng() * Math.PI * 2,
+					flapSpeed: FLAP_SPEED_MIN + rng() * FLAP_SPEED_RANGE,
+				});
 		}
 	}
 
@@ -183,8 +187,9 @@ export class Butterflies implements IWorldEntity
 	{
 		for (const bf of this.butterflies)
 		{
-			world.graphicsWorld.remove(bf.group);
-			world.physicsWorld.removeBody(bf.body);
+			world.sky.unregisterShadowCaster(bf.group);
+			world.removeNode(bf.group);
+			bf.collider.dispose();
 		}
 		this.butterflies.length = 0;
 		this.world = null;
@@ -225,16 +230,16 @@ export class Butterflies implements IWorldEntity
 
 			// Distance cull first - far-away butterflies skip every
 			// per-frame write below (group transform, body position,
-			// wing flap), so cannon's broadphase doesn't see them and
-			// three's render skips the (already-invisible) geometry.
+			// wing flap), so the broadphase doesn't see them move and the
+			// renderer skips the disabled geometry.
 			_toCam.set(x - camPos.x, y - camPos.y, z - camPos.z);
-			const visible = _toCam.lengthSq() < CULL_DISTANCE_SQ;
-			if (bf.group.visible !== visible) bf.group.visible = visible;
+			const visible = _toCam.lengthSquared() < CULL_DISTANCE_SQ;
+			if (bf.group.isEnabled(false) !== visible) bf.group.setEnabled(visible);
 			if (!visible) continue;
 
 			bf.group.position.set(x, y, z);
 			bf.group.rotation.y = t;
-			bf.body.position.set(x, y, z);
+			bf.collider.node.position.set(x, y, z);
 
 			// Wings flap by rotating around their own Y axis (paper-thin
 			// box geometry, so a Y rotation looks like a flap from any

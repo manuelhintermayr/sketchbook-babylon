@@ -1,5 +1,4 @@
-import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
+import { Color3, Mesh, MeshBuilder, PhysicsMotionType, PhysicsPrestepType, Scene, StandardMaterial, TransformNode, Vector3 } from '@babylonjs/core';
 
 import { World } from '../World';
 import { IWorldEntity } from '../../interfaces/IWorldEntity';
@@ -8,6 +7,7 @@ import { UpdateOrder } from '../../enums/UpdateOrder';
 import { CollisionGroups } from '../../enums/CollisionGroups';
 import { mulberry32 } from '../../core/FunctionLibrary';
 import { BirdSound } from '../audio/BirdSound';
+import { SphereCollider } from '../../physics/colliders/SphereCollider';
 
 // Flying birds as positional audio entities. Replaces the old global
 // bird-chirp synth in AmbientSound: each bird now owns a small visual
@@ -49,29 +49,29 @@ const FLAP_SPEED_RANGE = 12;
 const ORBIT_SPEED_MIN = 0.25;
 const ORBIT_SPEED_RANGE = 0.4;
 
-// Cannon body radius - sphere sized to roughly the bird's silhouette
-// at BIRD_SCALE. Kinematic, not dynamic: gravity would pull the flock
-// straight to the ground, so motion is driven by our orbit math each
-// frame and cannon's job is just collision presence.
+// Body radius - sphere sized to roughly the bird's silhouette at
+// BIRD_SCALE. Animated (kinematic), not dynamic: gravity would pull
+// the flock straight to the ground, so motion is driven by our orbit
+// math each frame and Havok's job is just collision presence.
 const BIRD_BODY_RADIUS = 0.4;
 
 // Beyond this distance from the camera the bird is too small / too
 // far away to read fine animation - we still keep the group's world
 // position in sync (so PositionalAudio chirps come from the right
-// direction) but skip the wing flap, banking roll, and cannon body
-// sync since none of them affect anything the player can perceive.
-// Threshold sits past the chirp MAX_DISTANCE (60 m) with a small
-// margin so the cull only kicks in once the bird is fully inaudible
-// and visually a 1-pixel speck.
+// direction) but skip the wing flap, banking roll, and body sync since
+// none of them affect anything the player can perceive. Threshold
+// sits past the chirp MAX_DISTANCE (60 m) with a small margin so the
+// cull only kicks in once the bird is fully inaudible and visually a
+// 1-pixel speck.
 const FAR_CULL_DISTANCE_SQ = 80 * 80;
 
 interface Bird
 {
-	group: THREE.Group;
-	leftWing: THREE.Group;
-	rightWing: THREE.Group;
+	group: TransformNode;
+	leftWing: TransformNode;
+	rightWing: TransformNode;
 	sound: BirdSound;
-	body: CANNON.Body;
+	collider: SphereCollider;
 	cx: number;
 	cz: number;
 	radius: number;
@@ -82,66 +82,70 @@ interface Bird
 	direction: number;
 }
 
-function mat(color: number): THREE.Material
+function mat(scene: Scene, color: number): StandardMaterial
 {
-	return new THREE.MeshStandardMaterial({ color, flatShading: true });
+	const material = new StandardMaterial('bird', scene);
+	material.diffuseColor = Color3.FromHexString('#' + color.toString(16).padStart(6, '0'));
+	material.specularColor.set(0.05, 0.05, 0.05);
+	return material;
 }
 
 interface BirdMesh
 {
-	group: THREE.Group;
-	leftWing: THREE.Group;
-	rightWing: THREE.Group;
+	group: TransformNode;
+	leftWing: TransformNode;
+	rightWing: TransformNode;
 }
 
-function buildBirdMesh(scheme: [number, number]): BirdMesh
+function part(mesh: Mesh, parent: TransformNode, material: StandardMaterial): Mesh
 {
-	const group = new THREE.Group();
+	mesh.material = material;
+	mesh.parent = parent;
+	mesh.isPickable = false;
+	mesh.receiveShadows = true;
+	return mesh;
+}
+
+function buildBirdMesh(scene: Scene, scheme: [number, number]): BirdMesh
+{
+	const group = new TransformNode('bird', scene);
 	const [bodyColor, wingColor] = scheme;
-	const bodyMat = mat(bodyColor);
-	const wingMat = mat(wingColor);
-	const beakMat = mat(0xffaa44);
-	const eyeMat = mat(0x111111);
+	const bodyMat = mat(scene, bodyColor);
+	const wingMat = mat(scene, wingColor);
+	const beakMat = mat(scene, 0xffaa44);
+	const eyeMat = mat(scene, 0x111111);
 
-	const body = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 0.5), bodyMat);
-	body.castShadow = true;
-	group.add(body);
+	part(MeshBuilder.CreateBox('body', { width: 0.18, height: 0.18, depth: 0.5 }, scene), group, bodyMat);
 
-	const head = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.16), bodyMat);
+	const head = part(MeshBuilder.CreateBox('head', { size: 0.16 }, scene), group, bodyMat);
 	head.position.z = 0.3;
-	group.add(head);
 
-	const beak = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.13, 4), beakMat);
+	const beak = part(MeshBuilder.CreateCylinder('beak', { diameterTop: 0, diameterBottom: 0.08, height: 0.13, tessellation: 4 }, scene), group, beakMat);
 	beak.position.z = 0.45;
 	beak.rotation.x = Math.PI / 2;
-	group.add(beak);
 
 	for (const x of [-0.07, 0.07])
 	{
-		const eye = new THREE.Mesh(new THREE.SphereGeometry(0.025, 4, 3), eyeMat);
+		const eye = part(MeshBuilder.CreateSphere('eye', { diameter: 0.05, segments: 3 }, scene), group, eyeMat);
 		eye.position.set(x, 0.03, 0.34);
-		group.add(eye);
 	}
 
-	// Wings are pivoted Groups so the mesh hangs out to the side and
+	// Wings are pivoted nodes so the mesh hangs out to the side and
 	// rotation.z gives a flap from the shoulder rather than the centre.
-	const leftWing = new THREE.Group();
+	const leftWing = new TransformNode('leftWing', scene);
+	leftWing.parent = group;
 	leftWing.position.set(-0.09, 0.05, 0);
-	const lwMesh = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.025, 0.24), wingMat);
+	const lwMesh = part(MeshBuilder.CreateBox('wing', { width: 0.42, height: 0.025, depth: 0.24 }, scene), leftWing, wingMat);
 	lwMesh.position.x = -0.21;
-	leftWing.add(lwMesh);
-	group.add(leftWing);
 
-	const rightWing = new THREE.Group();
+	const rightWing = new TransformNode('rightWing', scene);
+	rightWing.parent = group;
 	rightWing.position.set(0.09, 0.05, 0);
-	const rwMesh = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.025, 0.24), wingMat);
+	const rwMesh = part(MeshBuilder.CreateBox('wing', { width: 0.42, height: 0.025, depth: 0.24 }, scene), rightWing, wingMat);
 	rwMesh.position.x = 0.21;
-	rightWing.add(rwMesh);
-	group.add(rightWing);
 
-	const tail = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.04, 0.18), wingMat);
+	const tail = part(MeshBuilder.CreateBox('tail', { width: 0.18, height: 0.04, depth: 0.18 }, scene), group, wingMat);
 	tail.position.z = -0.3;
-	group.add(tail);
 
 	return { group, leftWing, rightWing };
 }
@@ -169,48 +173,45 @@ export class Birds implements IWorldEntity
 		for (let i = 0; i < BIRD_COUNT; i++)
 		{
 			const scheme = BIRD_PALETTE[Math.floor(rng() * BIRD_PALETTE.length)];
-			const meshes = buildBirdMesh(scheme);
-			meshes.group.scale.setScalar(BIRD_SCALE);
-			world.graphicsWorld.add(meshes.group);
-			meshes.group.traverse((child) =>
-			{
-				const m = (child as THREE.Mesh).material;
-				if (m && (m as THREE.Material).isMaterial) world.sky.csm.setupMaterial(m as THREE.Material);
-			});
+			const meshes = buildBirdMesh(world.scene, scheme);
+			meshes.group.scaling.setAll(BIRD_SCALE);
+			world.addNode(meshes.group);
+			world.sky.registerShadowCaster(meshes.group);
 
-			// Kinematic body: same collision group + mask as the wandering
+			// Animated body: same collision group + mask as the wandering
 			// animals so a bird that dives close to the player gets pushed
 			// out of the way rather than clipping through. Position is
-			// fully driven by our orbit math each frame; cannon never
-			// integrates motion on it (kinematic = no force response).
-			const body = new CANNON.Body(
-			{
-				type: CANNON.Body.KINEMATIC,
-				shape: new CANNON.Sphere(BIRD_BODY_RADIUS),
-				position: new CANNON.Vec3(0, FLIGHT_HEIGHT_MIN, 0),
+			// fully driven by our orbit math each frame; the TELEPORT
+			// prestep moves the body without a velocity (like cannon's
+			// kinematic position writes did), so a bird sweeping through
+			// the player nudges instead of launching them. Havok never
+			// integrates forces on the bird itself.
+			const collider = new SphereCollider(world.scene, {
+				radius: BIRD_BODY_RADIUS,
+				position: new Vector3(0, FLIGHT_HEIGHT_MIN, 0),
 				collisionFilterGroup: CollisionGroups.Animals,
 				collisionFilterMask: CollisionGroups.Default | CollisionGroups.Characters
 					| CollisionGroups.TrimeshColliders | CollisionGroups.Animals,
 			});
-			body.allowSleep = false;
-			world.physicsWorld.addBody(body);
+			collider.body.setMotionType(PhysicsMotionType.ANIMATED);
+			collider.body.setPrestepType(PhysicsPrestepType.TELEPORT);
 
 			this.birds.push(
-			{
-				group: meshes.group,
-				leftWing: meshes.leftWing,
-				rightWing: meshes.rightWing,
-				sound: new BirdSound(meshes.group, world),
-				body,
-				cx: (rng() - 0.5) * ORBIT_AREA,
-				cz: (rng() - 0.5) * ORBIT_AREA,
-				radius: ORBIT_RADIUS_MIN + rng() * ORBIT_RADIUS_RANGE,
-				height: FLIGHT_HEIGHT_MIN + rng() * FLIGHT_HEIGHT_RANGE,
-				speed: ORBIT_SPEED_MIN + rng() * ORBIT_SPEED_RANGE,
-				phase: rng() * Math.PI * 2,
-				flapSpeed: FLAP_SPEED_MIN + rng() * FLAP_SPEED_RANGE,
-				direction: rng() > 0.5 ? 1 : -1,
-			});
+				{
+					group: meshes.group,
+					leftWing: meshes.leftWing,
+					rightWing: meshes.rightWing,
+					sound: new BirdSound(meshes.group, world),
+					collider,
+					cx: (rng() - 0.5) * ORBIT_AREA,
+					cz: (rng() - 0.5) * ORBIT_AREA,
+					radius: ORBIT_RADIUS_MIN + rng() * ORBIT_RADIUS_RANGE,
+					height: FLIGHT_HEIGHT_MIN + rng() * FLIGHT_HEIGHT_RANGE,
+					speed: ORBIT_SPEED_MIN + rng() * ORBIT_SPEED_RANGE,
+					phase: rng() * Math.PI * 2,
+					flapSpeed: FLAP_SPEED_MIN + rng() * FLAP_SPEED_RANGE,
+					direction: rng() > 0.5 ? 1 : -1,
+				});
 		}
 	}
 
@@ -218,9 +219,10 @@ export class Birds implements IWorldEntity
 	{
 		for (const bird of this.birds)
 		{
-			world.graphicsWorld.remove(bird.group);
-			world.physicsWorld.removeBody(bird.body);
+			world.sky.unregisterShadowCaster(bird.group);
 			bird.sound.dispose();
+			world.removeNode(bird.group);
+			bird.collider.dispose();
 		}
 		this.birds.length = 0;
 		this.world = null;
@@ -285,13 +287,13 @@ export class Birds implements IWorldEntity
 				bird.leftWing.rotation.z = flap;
 				bird.rightWing.rotation.z = -flap;
 
-				// Kinematic body follows the visual exactly. Cannon will
+				// Animated body follows the visual exactly. Havok will
 				// resolve any contact (player capsule, ground animals)
 				// by pushing the other body away - the bird itself is
-				// unmoved because it's kinematic. Only kept in sync
+				// unmoved because it's animated. Only kept in sync
 				// while in range; far birds can't collide with anything
 				// the player cares about.
-				bird.body.position.set(x, y, z);
+				bird.collider.node.position.set(x, y, z);
 			}
 
 			// Sound scheduler runs regardless: chirps on a 5-12 s timer,
