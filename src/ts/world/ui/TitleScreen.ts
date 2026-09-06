@@ -26,7 +26,7 @@ export interface TitleScreenOptions
 export function showTitleScreen(options: TitleScreenOptions = {}): Promise<void>
 {
 	const title = options.title ?? 'Sketchbook';
-	const version = options.version ?? 'Version 0.8.0';
+	const version = options.version ?? 'Version 0.8.0 · Babylon.js + Havok edition';
 	// Caller can pass a literal English prompt for back-compat, but if
 	// they don't we look it up via i18n so the player's saved locale
 	// applies before the prompt is even drawn.
