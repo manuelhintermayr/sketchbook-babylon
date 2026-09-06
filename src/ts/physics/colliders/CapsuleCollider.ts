@@ -1,42 +1,89 @@
-import * as CANNON from 'cannon-es';
+import { PhysicsMotionType, PhysicsShapeCapsule, Scene, Vector3 } from '@babylonjs/core';
+
 import * as Utils from '../../core/FunctionLibrary';
-import { ICollider } from '../../interfaces/ICollider';
+import { ColliderBase, ColliderOptions, applyCollisionFilter } from './ColliderBase';
+import { PhysicsWorld } from '../PhysicsWorld';
 
-export class CapsuleCollider implements ICollider
+export interface CapsuleColliderOptions extends ColliderOptions
 {
-	public options: any;
-	public body: CANNON.Body;
+	height?: number;
+	radius?: number;
+	segments?: number;
+}
 
-	constructor(options: any)
+// Character capsule. cannon stacked three spheres because it had no
+// capsule primitive; Havok has a real one with the same dimensions
+// (height = distance between the two sphere centres, radius = sphere
+// radius). Rotation is locked by zeroing the inertia, the Havok
+// equivalent of cannon's fixedRotation.
+export class CapsuleCollider extends ColliderBase
+{
+	private enabled: boolean = true;
+
+	constructor(scene: Scene, options: CapsuleColliderOptions)
 	{
-		let defaults = {
+		super();
+
+		const defaults: CapsuleColliderOptions = {
 			mass: 0,
-			position: new CANNON.Vec3(),
+			position: new Vector3(),
 			height: 0.5,
 			radius: 0.3,
 			segments: 8,
-			friction: 0.3
+			friction: 0.3,
 		};
-		options = Utils.setDefaults(options, defaults);
-		this.options = options;
+		options = Utils.setDefaults(options, defaults) as CapsuleColliderOptions;
 
-		let mat = new CANNON.Material('capsuleMat');
-		mat.friction = options.friction;
+		const halfHeight = options.height / 2;
+		const shape = new PhysicsShapeCapsule(
+			new Vector3(0, -halfHeight, 0),
+			new Vector3(0, halfHeight, 0),
+			options.radius,
+			scene,
+		);
 
-		let capsuleBody = new CANNON.Body({
-			mass: options.mass,
-			position: options.position
-		});
+		this.init(scene, 'capsuleCollider', shape, options);
 
-		// Compound shape
-		let sphereShape = new CANNON.Sphere(options.radius);
+		if (options.mass > 0)
+		{
+			this.lockRotation();
+		}
+	}
 
-		capsuleBody.material = mat;
+	private lockRotation(): void
+	{
+		this.body.setMassProperties({ mass: this.options.mass, inertia: new Vector3(0, 0, 0) });
+	}
 
-		capsuleBody.addShape(sphereShape, new CANNON.Vec3(0, 0, 0));
-		capsuleBody.addShape(sphereShape, new CANNON.Vec3(0, options.height / 2, 0));
-		capsuleBody.addShape(sphereShape, new CANNON.Vec3(0, -options.height / 2, 0));
+	// Sketchbook parks the capsule while the character rides a vehicle
+	// (cannon: removeBody). The Havok body stays registered but stops
+	// colliding and simulating: filter membership 0 so nothing touches
+	// it, ANIMATED motion so gravity leaves it alone, and the node sync
+	// keeps it tagging along with the (vehicle-parented) character.
+	public setEnabled(value: boolean): void
+	{
+		if (this.enabled === value) return;
+		this.enabled = value;
 
-		this.body = capsuleBody;
+		if (value)
+		{
+			applyCollisionFilter(this.shape, this.options.collisionFilterGroup, this.options.collisionFilterMask);
+			this.body.setMotionType(PhysicsMotionType.DYNAMIC);
+			this.lockRotation();
+			PhysicsWorld.zeroVelocity(this.body);
+			PhysicsWorld.enableNodeSync(this.body);
+			PhysicsWorld.setAllowSleep(this.body, false);
+		}
+		else
+		{
+			PhysicsWorld.zeroVelocity(this.body);
+			applyCollisionFilter(this.shape, 0, 0);
+			this.body.setMotionType(PhysicsMotionType.ANIMATED);
+		}
+	}
+
+	public get isEnabled(): boolean
+	{
+		return this.enabled;
 	}
 }

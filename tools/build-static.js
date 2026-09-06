@@ -24,6 +24,7 @@ const ITEMS = [
 	'audio',                                 // horn.wav + music/*.mp3
 	'build/sketchbook.min.js',
 	'build/sketchbook.min.js.LICENSE.txt',
+	'build/HavokPhysics.wasm',               // Havok physics core, emitted by webpack
 	'build/assets',                          // *.glb level / vehicle models
 	'src/img',                               // textures referenced from code
 	'vendor/joycon',                         // Joycon lib + Client.js + glue

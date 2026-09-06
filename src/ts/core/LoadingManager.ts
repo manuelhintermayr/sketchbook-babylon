@@ -1,23 +1,71 @@
-import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { AbstractMesh, AnimationGroup, ImportMeshAsync, Scene, Skeleton, TransformNode } from '@babylonjs/core';
+import { GLTFLoaderAnimationStartMode } from '@babylonjs/loaders/glTF';
+import Swal from 'sweetalert2';
+
 import { LoadingTrackerEntry } from './LoadingTrackerEntry';
 import { UIManager } from './UIManager';
 import { Scenario } from '../world/scenarios/Scenario';
-import Swal from 'sweetalert2';
 import { World } from '../world/World';
+
+// What a loaded .glb (or a code-built sandbox) hands to the engine. The
+// shape mirrors three's GLTF result closely enough that the consumers
+// (Character, Vehicle, loadScene) read root + animations the same way:
+// `root` is the __root__ node the glTF loader creates, `animationGroups`
+// replaces gltf.animations.
+export interface LoadedModel
+{
+	root: TransformNode;
+	meshes: AbstractMesh[];
+	animationGroups: AnimationGroup[];
+	skeletons: Skeleton[];
+	scene: Scene;
+}
+
+export async function loadModel(scene: Scene, path: string, onProgress?: (loaded: number, total: number, lengthComputable: boolean) => void): Promise<LoadedModel>
+{
+	const result = await ImportMeshAsync(path, scene, {
+		onProgress: (event) => onProgress?.(event.loaded, event.total, event.lengthComputable),
+		pluginOptions: {
+			gltf: {
+				animationStartMode: GLTFLoaderAnimationStartMode.NONE,
+				compileMaterials: false,
+			},
+		},
+	});
+
+	let root: TransformNode;
+	const first = result.meshes[0];
+	if (first !== undefined && first.name === '__root__' && first.parent === null)
+	{
+		root = first;
+	}
+	else
+	{
+		root = new TransformNode('modelRoot', scene);
+		for (const mesh of result.meshes) if (mesh.parent === null) mesh.parent = root;
+		for (const node of result.transformNodes) if (node.parent === null) node.parent = root;
+	}
+
+	return {
+		root,
+		meshes: result.meshes,
+		animationGroups: result.animationGroups,
+		skeletons: result.skeletons,
+		scene,
+	};
+}
 
 export class LoadingManager
 {
 	public firstLoad: boolean = true;
 	public onFinishedCallback: () => void;
-	
+
 	private world: World;
-	private gltfLoader: GLTFLoader;
 	private loadingTracker: LoadingTrackerEntry[] = [];
 
 	constructor(world: World)
 	{
 		this.world = world;
-		this.gltfLoader = new GLTFLoader();
 
 		this.world.setTimeScale(0);
 		UIManager.setUserInterfaceVisible(false);
@@ -25,28 +73,25 @@ export class LoadingManager
 		UIManager.setLoadingProgress(0);
 	}
 
-	public loadGLTF(path: string, onLoadingFinished: (gltf: any) => void): void
+	public loadGLTF(path: string, onLoadingFinished: (model: LoadedModel) => void): void
 	{
 		let trackerEntry = this.addLoadingEntry(path);
 
-		this.gltfLoader.load(path,
-			(gltf)  =>
+		loadModel(this.world.scene, path, (loaded, total, lengthComputable) =>
+		{
+			if (lengthComputable)
 			{
-				onLoadingFinished(gltf);
-				this.doneLoading(trackerEntry);
-			},
-			(xhr) =>
-			{
-				if ( xhr.lengthComputable )
-				{
-					trackerEntry.progress = xhr.loaded / xhr.total;
-					UIManager.setLoadingProgress(this.getLoadingPercentage());
-				}
-			},
-			(error)  =>
-			{
-				console.error(error);
-			});
+				trackerEntry.progress = loaded / total;
+				UIManager.setLoadingProgress(this.getLoadingPercentage());
+			}
+		}).then((model) =>
+		{
+			onLoadingFinished(model);
+			this.doneLoading(trackerEntry);
+		}).catch((error) =>
+		{
+			console.error(error);
+		});
 	}
 
 	public addLoadingEntry(path: string): LoadingTrackerEntry
@@ -65,16 +110,11 @@ export class LoadingManager
 
 		if (this.isLoadingDone())
 		{
-			// Walk the freshly-loaded scene and pre-compile every material
-			// permutation on the GPU so the first time the player turns
-			// toward a distant vehicle, NPC, or piece of terrain the frame
-			// doesn't stall while WebGL builds shaders. compileAsync yields
-			// to the event loop between programs so the loading screen
-			// stays responsive while it runs.
-			await this.world.renderer.compileAsync(
-				this.world.graphicsWorld,
-				this.world.camera,
-			);
+			// Wait until every material permutation and texture of the
+			// freshly-loaded scene is ready on the GPU so the first time the
+			// player turns toward a distant vehicle, NPC, or piece of
+			// terrain the frame doesn't stall while WebGL builds shaders.
+			await this.world.scene.whenReadyAsync();
 
 			if (this.onFinishedCallback !== undefined)
 			{
@@ -96,7 +136,7 @@ export class LoadingManager
 			this.onFinishedCallback = () =>
 			{
 				this.world.update(1, 1);
-	
+
 				Swal.fire({
 					title: scenario.descriptionTitle,
 					html: scenario.descriptionContent,

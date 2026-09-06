@@ -1,18 +1,37 @@
-// Camera/object layers used for selective rendering passes.
-// THREE.Object3D.layers is a 32-bit bitmask; a mesh is rendered when
-// (mesh.layers & camera.layers) != 0.
+import { AbstractMesh, Node } from '@babylonjs/core';
+
+// Selective rendering passes. three used Object3D.layers bitmasks for
+// this; Babylon meshes carry a layerMask too, but the only consumer is
+// the outline depth pre-pass, whose render target takes a predicate.
+// A metadata flag is simpler than juggling camera layer masks.
 export enum RenderLayer
 {
 	// Layer 0 - the default. Every mesh is on it unless moved off.
-	// Listed here for documentation; not normally written explicitly.
 	Default = 0,
 
-	// Layer 1 - meshes opt INTO this layer to be skipped by the outline
-	// depth pre-pass. Background geometry that would either look ugly
+	// Meshes opt INTO this layer to be skipped by the outline depth
+	// pre-pass. Background geometry that would either look ugly
 	// outlined (grass blades, water tiles) or has no real depth edges
 	// the player benefits from (sky shell, stars, distant celestials)
-	// belongs here. The main camera enables this layer so they still
-	// render normally; OutlineEffect.renderPass temporarily strips the
-	// bit before its depth pre-pass.
+	// belongs here.
 	OutlineSkip = 1,
+}
+
+const FLAG = 'outlineSkip';
+
+// Flags a node (and every mesh below it) as OutlineSkip.
+export function markOutlineSkip(node: Node): void
+{
+	const apply = (n: Node): void =>
+	{
+		if (n.metadata === null || n.metadata === undefined) n.metadata = {};
+		n.metadata[FLAG] = true;
+	};
+	apply(node);
+	for (const child of node.getDescendants(false)) apply(child);
+}
+
+export function isOutlineSkip(mesh: AbstractMesh): boolean
+{
+	return mesh.metadata?.[FLAG] === true;
 }

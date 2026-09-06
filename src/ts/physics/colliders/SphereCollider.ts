@@ -1,42 +1,32 @@
-import * as CANNON from 'cannon-es';
-import * as THREE from 'three';
+import { PhysicsShapeSphere, Scene, Vector3 } from '@babylonjs/core';
+
 import * as Utils from '../../core/FunctionLibrary';
-import { ICollider } from '../../interfaces/ICollider';
+import { ColliderBase, ColliderOptions } from './ColliderBase';
+
+export interface SphereColliderOptions extends ColliderOptions
+{
+	radius?: number;
+}
 
 // Sphere physics shape, ported from tkkaushik369/socketControl. Pairs
 // with BoxCollider/CylinderCollider as a primitive that map authoring
 // can spawn via ShapeSpawnPoint.
-export class SphereCollider implements ICollider
+export class SphereCollider extends ColliderBase
 {
-	public options: any;
-	public body: CANNON.Body;
-	public debugModel: THREE.Mesh;
-
-	constructor(options: any)
+	constructor(scene: Scene, options: SphereColliderOptions)
 	{
-		let defaults = {
+		super();
+
+		const defaults: SphereColliderOptions = {
 			mass: 0,
-			position: new THREE.Vector3(),
+			position: new Vector3(),
 			radius: 0.3,
 			friction: 0.3,
 		};
-		options = Utils.setDefaults(options, defaults);
-		this.options = options;
+		options = Utils.setDefaults(options, defaults) as SphereColliderOptions;
 
-		options.position = new CANNON.Vec3(options.position.x, options.position.y, options.position.z);
+		const shape = new PhysicsShapeSphere(Vector3.Zero(), options.radius, scene);
 
-		let mat = new CANNON.Material('sphereMat');
-		mat.friction = options.friction;
-
-		let shape = new CANNON.Sphere(options.radius);
-
-		let physSphere = new CANNON.Body({
-			mass: options.mass,
-			position: options.position,
-			shape,
-		});
-		physSphere.material = mat;
-
-		this.body = physSphere;
+		this.init(scene, 'sphereCollider', shape, options);
 	}
 }

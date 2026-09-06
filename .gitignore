@@ -5,6 +5,7 @@ node_modules
 # Webpack / TypeScript build output (keep build/assets/*.glb)
 build/sketchbook.min.js
 build/sketchbook.min.js.LICENSE.txt
+build/HavokPhysics.wasm
 build/types/
 
 # Static-site bundle produced by `npm run build:static` - regenerate, never commit.

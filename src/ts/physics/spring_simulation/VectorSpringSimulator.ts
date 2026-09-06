@@ -1,13 +1,13 @@
-import * as THREE from 'three';
+import { Vector3 } from '@babylonjs/core';
 import { SimulatorBase } from './SimulatorBase';
 import { SimulationFrameVector } from './SimulationFrameVector';
 import { springV } from '../../core/FunctionLibrary';
 
 export class VectorSpringSimulator extends SimulatorBase
 {
-	public position: THREE.Vector3;
-	public velocity: THREE.Vector3;
-	public target: THREE.Vector3;
+	public position: Vector3;
+	public velocity: Vector3;
+	public target: Vector3;
 	public cache: SimulationFrameVector[];
 	
 	constructor(fps: number, mass: number, damping: number)
@@ -20,16 +20,16 @@ export class VectorSpringSimulator extends SimulatorBase
 
 	public init(): void
 	{
-		this.position = new THREE.Vector3();
-		this.velocity = new THREE.Vector3();
-		this.target = new THREE.Vector3();
+		this.position = new Vector3();
+		this.velocity = new Vector3();
+		this.target = new Vector3();
 
 		// Initialize cache by pushing two frames
 		this.cache = [];
 		for (let i = 0; i < 2; i++)
 		{
 			this.cache.push(
-				new SimulationFrameVector(new THREE.Vector3(), new THREE.Vector3()),
+				new SimulationFrameVector(new Vector3(), new Vector3()),
 			);
 		}
 	}
@@ -44,8 +44,8 @@ export class VectorSpringSimulator extends SimulatorBase
 		this.generateFrames(timeStep);
 
 		// Return interpolation
-		this.position.lerpVectors(this.cache[0].position, this.cache[1].position, this.offset / this.frameTime);
-		this.velocity.lerpVectors(this.cache[0].velocity, this.cache[1].velocity, this.offset / this.frameTime);
+		Vector3.LerpToRef(this.cache[0].position, this.cache[1].position, this.offset / this.frameTime, this.position);
+		Vector3.LerpToRef(this.cache[0].velocity, this.cache[1].velocity, this.offset / this.frameTime, this.velocity);
 	}
 
 	/**

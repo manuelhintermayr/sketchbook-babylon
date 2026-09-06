@@ -1,42 +1,36 @@
-import * as CANNON from 'cannon-es';
-import * as THREE from 'three';
+import { PhysicsShapeBox, Quaternion, Scene, Vector3 } from '@babylonjs/core';
+
 import * as Utils from '../../core/FunctionLibrary';
-import { ICollider } from '../../interfaces/ICollider';
+import { ColliderBase, ColliderOptions } from './ColliderBase';
 
-export class BoxCollider implements ICollider
+export interface BoxColliderOptions extends ColliderOptions
 {
-	public options: any;
-	public body: CANNON.Body;
-	public debugModel: THREE.Mesh;
-	
-	constructor(options: any)
+	// Half extents, same convention CANNON.Box used. Havok wants full
+	// extents so the wrapper doubles them.
+	size?: Vector3;
+}
+
+export class BoxCollider extends ColliderBase
+{
+	constructor(scene: Scene, options: BoxColliderOptions)
 	{
-		let defaults = {
+		super();
+
+		const defaults: BoxColliderOptions = {
 			mass: 0,
-			position: new THREE.Vector3(),
-			size: new THREE.Vector3(0.3, 0.3, 0.3),
-			friction: 0.3
+			position: new Vector3(),
+			size: new Vector3(0.3, 0.3, 0.3),
+			friction: 0.3,
 		};
-		options = Utils.setDefaults(options, defaults);
-		this.options = options;
+		options = Utils.setDefaults(options, defaults) as BoxColliderOptions;
 
-		options.position = new CANNON.Vec3(options.position.x, options.position.y, options.position.z);
-		options.size = new CANNON.Vec3(options.size.x, options.size.y, options.size.z);
+		const shape = new PhysicsShapeBox(
+			Vector3.Zero(),
+			Quaternion.Identity(),
+			options.size.scale(2),
+			scene,
+		);
 
-		let mat = new CANNON.Material('boxMat');
-		mat.friction = options.friction;
-
-		let shape = new CANNON.Box(options.size);
-
-		// Add phys sphere
-		let physBox = new CANNON.Body({
-			mass: options.mass,
-			position: options.position,
-			shape
-		});
-		
-		physBox.material = mat;
-
-		this.body = physBox;
+		this.init(scene, 'boxCollider', shape, options);
 	}
 }

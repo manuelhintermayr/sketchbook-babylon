@@ -1,10 +1,8 @@
-import * as CANNON from 'cannon-es';
+import { PhysicsBody, PhysicsShape, TransformNode } from '@babylonjs/core';
 
 export interface ICollider {
-	body: CANNON.Body;
-	
-	// physical: CANNON.Body;
-	// visual: THREE.Mesh;
-
-	// getVisualModel(options: any): THREE.Mesh;
+	body: PhysicsBody;
+	shape: PhysicsShape;
+	node: TransformNode;
+	dispose(): void;
 }

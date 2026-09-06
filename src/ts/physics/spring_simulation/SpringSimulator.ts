@@ -1,7 +1,6 @@
-import * as THREE from 'three';
 import { SimulatorBase } from './SimulatorBase';
 import { SimulationFrame } from './SimulationFrame';
-import { spring } from '../../core/FunctionLibrary';
+import { lerp, spring } from '../../core/FunctionLibrary';
 
 export class SpringSimulator extends SimulatorBase
 {
@@ -42,8 +41,8 @@ export class SpringSimulator extends SimulatorBase
 		this.generateFrames(timeStep);
 
 		// Return values interpolated between cached frames
-		this.position = THREE.MathUtils.lerp(this.cache[0].position, this.cache[1].position, this.offset / this.frameTime);
-		this.velocity = THREE.MathUtils.lerp(this.cache[0].velocity, this.cache[1].velocity, this.offset / this.frameTime);
+		this.position = lerp(this.cache[0].position, this.cache[1].position, this.offset / this.frameTime);
+		this.velocity = lerp(this.cache[0].velocity, this.cache[1].velocity, this.offset / this.frameTime);
 	}
 
 	/**

@@ -7,7 +7,7 @@ module.exports = merge(common, {
     plugins: [
         new webpack.BannerPlugin({
           banner:
-          `Sketchbook 0.6 (https://github.com/manuelhintermayr/sketchbook-upgraded)\nBuilt on three.js (https://github.com/mrdoob/three.js) and cannon-es (https://github.com/pmndrs/cannon-es)`,
+          `Sketchbook 0.8 - Babylon.js edition (https://github.com/manuelhintermayr/sketchbook-babylon)\nBuilt on Babylon.js (https://github.com/BabylonJS/Babylon.js) and Havok Physics (https://www.npmjs.com/package/@babylonjs/havok)`,
         }),
     ]
 });

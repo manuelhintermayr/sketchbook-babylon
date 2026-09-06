@@ -1,45 +1,44 @@
-import * as CANNON from 'cannon-es';
-import * as THREE from 'three';
+import { PhysicsShapeCylinder, Scene, Vector3 } from '@babylonjs/core';
+
 import * as Utils from '../../core/FunctionLibrary';
-import { ICollider } from '../../interfaces/ICollider';
+import { ColliderBase, ColliderOptions } from './ColliderBase';
 
-// Cylinder physics shape, ported from tkkaushik369/socketControl. Shaped
-// like CANNON's other primitives (Box/Sphere); useful for pillars,
-// barrels, manhole-style triggers etc. Map authoring uses a Cylinder
-// mesh in world.glb tagged with userData.type='cylinder'.
-export class CylinderCollider implements ICollider
+export interface CylinderColliderOptions extends ColliderOptions
 {
-	public options: any;
-	public body: CANNON.Body;
-	public debugModel: THREE.Mesh;
+	radius?: number;
+	height?: number;
+	segment?: number;
+}
 
-	constructor(options: any)
+// Cylinder physics shape, ported from tkkaushik369/socketControl. Useful
+// for pillars, barrels, manhole-style triggers etc. Map authoring uses a
+// Cylinder mesh in world.glb tagged with userData.type='cylinder'. Havok
+// cylinders are analytic, so the segment count from the cannon days is
+// accepted for compatibility and ignored.
+export class CylinderCollider extends ColliderBase
+{
+	constructor(scene: Scene, options: CylinderColliderOptions)
 	{
-		let defaults = {
+		super();
+
+		const defaults: CylinderColliderOptions = {
 			mass: 0,
-			position: new THREE.Vector3(),
+			position: new Vector3(),
 			radius: 0.3,
 			height: 0.1,
 			segment: 6,
 			friction: 0.3,
 		};
-		options = Utils.setDefaults(options, defaults);
-		this.options = options;
+		options = Utils.setDefaults(options, defaults) as CylinderColliderOptions;
 
-		options.position = new CANNON.Vec3(options.position.x, options.position.y, options.position.z);
+		const halfHeight = options.height / 2;
+		const shape = new PhysicsShapeCylinder(
+			new Vector3(0, -halfHeight, 0),
+			new Vector3(0, halfHeight, 0),
+			options.radius,
+			scene,
+		);
 
-		let mat = new CANNON.Material('cylinderMat');
-		mat.friction = options.friction;
-
-		let shape = new CANNON.Cylinder(options.radius, options.radius, options.height, options.segment);
-
-		let physCyl = new CANNON.Body({
-			mass: options.mass,
-			position: options.position,
-			shape,
-		});
-		physCyl.material = mat;
-
-		this.body = physCyl;
+		this.init(scene, 'cylinderCollider', shape, options);
 	}
 }
