@@ -1,4 +1,5 @@
-import { Color3, Mesh, MeshBuilder, Scene, StandardMaterial, TransformNode } from '@babylonjs/core';
+import { Mesh, MeshBuilder, Scene, StandardMaterial, TransformNode } from '@babylonjs/core';
+import * as Utils from '../../core/FunctionLibrary';
 
 // Shared types + colour schemes + low-level mesh helpers used by the
 // per-species builders (CatBuilder, DogBuilder) and the per-frame
@@ -75,7 +76,7 @@ export const FOOT_OFFSET = 0.42;
 export function mat(scene: Scene, color: number): StandardMaterial
 {
 	const material = new StandardMaterial('animal', scene);
-	material.diffuseColor = Color3.FromHexString('#' + color.toString(16).padStart(6, '0'));
+	material.diffuseColor = Utils.linearColorFromHex(color);
 	material.specularColor.set(0.05, 0.05, 0.05);
 	return material;
 }

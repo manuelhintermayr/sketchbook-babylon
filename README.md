@@ -1,9 +1,13 @@
 <p align="center">
-	<a href="https://projects.manuelhintermayr.com/sketchbook-upgraded/"><img src="./src/img/thumbnail.png"></a>
+	<a href="https://projects.manuelhintermayr.com/sketchbook-babylon/"><img src="./src/img/thumbnail.png"></a>
+	<br>
+	<a href="https://projects.manuelhintermayr.com/sketchbook-babylon/">Live demo (Babylon.js + Havok edition)</a>
 	<br>
 	<a href="https://projects.manuelhintermayr.com/sketchbook-upgraded/">Live demo (v0.8.0, Webpack edition)</a>
 	<br>
 	<a href="https://projects.manuelhintermayr.com/sketchbook-nuxt/">Live demo (Nuxt 4 + Vue 3 edition)</a>
+	<br>
+	<a href="https://projects.manuelhintermayr.com/sketchbook-rapier/">Live demo (Rapier edition)</a>
 	<br>
 	<a href="https://jblaha.art/sketchbook/latest">Original demo by swift502</a>
 	<br>
@@ -145,7 +149,7 @@ Beyond this README, the repo carries a handful of complementary docs - pick the 
 
 ## September 2026 - Babylon.js + Havok edition ([manuelhintermayr](https://github.com/manuelhintermayr))
 
-Full port of the 0.8.0 code base from three.js + cannon-es to Babylon.js 9 + Havok Physics, done as a separate repository (`claude/babylon-migration` on top of the `claude/external-features` baseline snapshot). Gameplay, maps, scenarios, UI, i18n and the procedural audio are unchanged; what was rewritten is the layer underneath: `World` + `RendererPipeline` on a Babylon `Engine`/`Scene` (right-handed, ACES tone mapping, FXAA post-process, `CascadedShadowGenerator`, `DepthRenderer` + post-process outline), `Sky` on `SkyMaterial` with custom star / moon-outline meshes, `Ocean` as a `PBRCustomMaterial` wave shader, `Grass` as instanced `VertexBuffer`s on a `ShaderMaterial`, glTF loading through `@babylonjs/loaders` with userData carried in `metadata`, a small DOM `LabelRenderer` replacing `CSS2DRenderer`, and a plain Web Audio spatializer (`SpatialAudio.ts`) replacing `THREE.AudioListener` / `PositionalAudio`. Physics runs on Babylon's Physics V2 API over Havok: manual stepping with pre/post-step listeners, collider wrappers on `PhysicsBody` + `PhysicsShape*`, the character capsule with locked rotation, and a port of cannon-es's `RaycastVehicle` (Bullet's `btRaycastVehicle`) on top of Havok bodies so cars, boats, helicopters, airplanes and the rocket keep their tuning values. three's `CatmullRomCurve3` was ported for the race curves; the swift502 credits sign was converted from FBX to GLB with Blender.
+Full port of the 0.8.0 code base from three.js + cannon-es to Babylon.js 9 + Havok Physics, done as a separate repository (`claude/babylon-migration` on top of the `claude/external-features` baseline snapshot). Gameplay, maps, scenarios, UI, i18n and the procedural audio are unchanged; what was rewritten is the layer underneath: `World` + `RendererPipeline` on a Babylon `Engine`/`Scene` (right-handed, a linear colour pipeline matching three's composer output with three's ACES + sRGB as a pass when FXAA is off, `CascadedShadowGenerator`, `DepthRenderer` + post-process outline), `Sky` on a port of three's Sky shader with custom star / moon-outline meshes, `Ocean` as a `PBRCustomMaterial` wave shader, `Grass` as instanced `VertexBuffer`s on a `ShaderMaterial`, glTF loading through `@babylonjs/loaders` with userData carried in `metadata`, a small DOM `LabelRenderer` replacing `CSS2DRenderer`, and a plain Web Audio spatializer (`SpatialAudio.ts`) replacing `THREE.AudioListener` / `PositionalAudio`. Physics runs on Babylon's Physics V2 API over Havok: manual stepping with pre/post-step listeners, collider wrappers on `PhysicsBody` + `PhysicsShape*`, the character capsule with locked rotation, and a port of cannon-es's `RaycastVehicle` (Bullet's `btRaycastVehicle`) on top of Havok bodies so cars, boats, helicopters, airplanes and the rocket keep their tuning values. three's `CatmullRomCurve3` was ported for the race curves; the swift502 credits sign was converted from FBX to GLB with Blender.
 
 > **Attribution policy:** every port below tries to preserve the original commits or at least the original authors via `git format-patch` / `git am` or `git commit --author="…" --date="…"`. The intent is to honour each upstream author's work - and only their work - in `git log`.
 >

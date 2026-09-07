@@ -1,4 +1,4 @@
-import { Color3, LinesMesh, MeshBuilder, TransformNode, Vector3 } from '@babylonjs/core';
+import { LinesMesh, MeshBuilder, TransformNode, Vector3 } from '@babylonjs/core';
 
 import { World } from './World';
 import { Scenario } from './scenarios/Scenario';
@@ -67,7 +67,7 @@ export class RaceContent implements IUpdatable
 		// Visible debug-only line tracing the curve.
 		const samples = this.curve.getPoints(200);
 		this.debugLine = MeshBuilder.CreateLines('raceCurve', { points: samples }, this.world.scene);
-		this.debugLine.color = Color3.FromHexString('#ffaa00');
+		this.debugLine.color = Utils.linearColorFromHex(0xffaa00);
 		this.debugLine.parent = this.checkpointGroup;
 		this.debugLine.setEnabled(false);
 

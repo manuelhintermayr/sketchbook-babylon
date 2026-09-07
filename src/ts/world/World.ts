@@ -2,6 +2,7 @@ import {
 	Engine,
 	FreeCamera,
 	FxaaPostProcess,
+	PostProcess,
 	Node,
 	PhysicsBody,
 	PhysicsViewer,
@@ -72,6 +73,7 @@ export class World
 	public camera: FreeCamera;
 	public labelRenderer: LabelRenderer;
 	public fxaaPass: FxaaPostProcess;
+	public toneMappingPass: PostProcess;
 	public fxaaAttached: boolean = true;
 	public stats: Stats;
 	public sky: Sky;

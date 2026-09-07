@@ -1,6 +1,5 @@
 import {
 	AnimationGroup,
-	Color3,
 	Color4,
 	Material,
 	Mesh,
@@ -71,16 +70,12 @@ export interface MaterialOptions
 	name?: string;
 }
 
-function hex(color: number): string
-{
-	return '#' + color.toString(16).padStart(6, '0');
-}
 
 // three's MeshLambertMaterial / MeshStandardMaterial({ color }) stand-in.
 export function lambert(scene: Scene, color: number, options: MaterialOptions = {}): StandardMaterial
 {
 	const material = new StandardMaterial(options.name ?? 'sandbox', scene);
-	material.diffuseColor = Color3.FromHexString(hex(color));
+	material.diffuseColor = Utils.linearColorFromHex(color);
 	material.specularColor.set(0, 0, 0);
 	if (options.alpha !== undefined) material.alpha = options.alpha;
 	if (options.wireframe === true) material.wireframe = true;
@@ -208,7 +203,7 @@ export function polarGridHelper(scene: Scene, parent: Node | null, radius: numbe
 	}
 
 	const system = MeshBuilder.CreateLineSystem('polarGridLines', { lines }, scene);
-	system.color = new Color3(0.5, 0.5, 0.5);
+	system.color = Utils.linearColorFromHex(0x888888);
 	system.parent = node;
 	system.isPickable = false;
 	return node;

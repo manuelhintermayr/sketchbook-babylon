@@ -5,8 +5,8 @@
  *
  * Babylon flavour: the built-in matrices are `world`, `view` and
  * `projection` (three had modelMatrix / modelViewMatrix /
- * projectionMatrix), and tone mapping is applied by the engine's image
- * processing instead of an inline #if block.
+ * projectionMatrix), and three's TONE_MAPPING block is the tone-mapping
+ * pass in RendererPipeline.
  */
 
 export let GrassShader = {

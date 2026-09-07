@@ -78,7 +78,7 @@ function spawnBall(world: World, balls: ShapeEntity[]): void
 
 	const mesh = MeshBuilder.CreateSphere('ball', { diameter: BALL_RADIUS * 2, segments: 12 }, world.scene);
 	const mat = new StandardMaterial('ballMaterial', world.scene);
-	mat.diffuseColor = Color3.FromHexString('#cccccc');
+	mat.diffuseColor = Utils.linearColorFromHex(0xcccccc);
 	mat.specularColor = Color3.Black();
 	mesh.material = mat;
 	mesh.position.copyFrom(spawnPos);

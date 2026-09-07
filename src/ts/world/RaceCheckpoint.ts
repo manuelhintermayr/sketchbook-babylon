@@ -1,7 +1,8 @@
-import { Color3, Mesh, MeshBuilder, Quaternion, StandardMaterial, Vector3 } from '@babylonjs/core';
+import { Mesh, MeshBuilder, Quaternion, StandardMaterial, Vector3 } from '@babylonjs/core';
 
 import { RaceContent } from './RaceContent';
 import { CatmullRomCurve3 } from '../core/CatmullRomCurve3';
+import * as Utils from '../core/FunctionLibrary';
 
 // One trigger plane along a race curve. Crossing the plane front-to-back
 // (relative to the curve tangent) within the rectangle counts as
@@ -39,8 +40,8 @@ export class RaceCheckpoint
 		const tangent = curve.getTangent(this.t).normalize();
 
 		const mat = new StandardMaterial('checkpointMaterial', scene);
-		mat.diffuseColor = Color3.FromHexString('#00ff88');
-		mat.emissiveColor = Color3.FromHexString('#00ff88');
+		mat.diffuseColor = Utils.linearColorFromHex(0x00ff88);
+		mat.emissiveColor = Utils.linearColorFromHex(0x00ff88);
 		mat.alpha = 0.35;
 		mat.backFaceCulling = false;
 
@@ -57,7 +58,7 @@ export class RaceCheckpoint
 
 		// Visible bar to make the plane easier to spot.
 		const barMat = new StandardMaterial('checkpointBarMaterial', scene);
-		barMat.emissiveColor = Color3.FromHexString('#00ff88');
+		barMat.emissiveColor = Utils.linearColorFromHex(0x00ff88);
 		const bar = MeshBuilder.CreateBox('checkpointBar' + index, { width: PLANE_W, height: 0.1, depth: 0.1 }, scene);
 		bar.material = barMat;
 		bar.position.set(0, 0, 0.01);

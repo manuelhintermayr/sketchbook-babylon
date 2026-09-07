@@ -1,4 +1,4 @@
-import { Color3, Mesh, MeshBuilder, PhysicsMotionType, PhysicsPrestepType, Scene, StandardMaterial, TransformNode, Vector3 } from '@babylonjs/core';
+import { Mesh, MeshBuilder, PhysicsMotionType, PhysicsPrestepType, Scene, StandardMaterial, TransformNode, Vector3 } from '@babylonjs/core';
 
 import { World } from '../World';
 import { IWorldEntity } from '../../interfaces/IWorldEntity';
@@ -7,6 +7,7 @@ import { UpdateOrder } from '../../enums/UpdateOrder';
 import { CollisionGroups } from '../../enums/CollisionGroups';
 import { mulberry32 } from '../../core/FunctionLibrary';
 import { SphereCollider } from '../../physics/colliders/SphereCollider';
+import * as Utils from '../../core/FunctionLibrary';
 
 // Ambient butterflies. Pure visual decoration - no audio. Pattern
 // adapted from the low-poly-cat-game butterfly: each butterfly is a
@@ -94,11 +95,11 @@ function buildButterflyMesh(scene: Scene, color: number): ButterflyMesh
 	// banked or viewed edge-on - the geometry is paper-thin and the
 	// camera will frequently catch a wing's underside.
 	const wingMat = new StandardMaterial('butterflyWing', scene);
-	wingMat.diffuseColor = Color3.FromHexString('#' + color.toString(16).padStart(6, '0'));
+	wingMat.diffuseColor = Utils.linearColorFromHex(color);
 	wingMat.specularColor.set(0.05, 0.05, 0.05);
 	wingMat.backFaceCulling = false;
 	const bodyMat = new StandardMaterial('butterflyBody', scene);
-	bodyMat.diffuseColor = Color3.FromHexString('#222222');
+	bodyMat.diffuseColor = Utils.linearColorFromHex(0x222222);
 	bodyMat.specularColor.set(0.05, 0.05, 0.05);
 
 	const leftWing = MeshBuilder.CreateBox('wing', { width: 0.3, height: 0.02, depth: 0.25 }, scene);

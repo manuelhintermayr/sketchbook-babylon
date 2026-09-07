@@ -70,7 +70,7 @@ export function loadScene(world: World, loadingManager: LoadingManager, model: L
 			{
 				const instances = material !== null ? Utils.materialUserData(material).instances : undefined;
 				const lawn = new StandardMaterial('grass', scene);
-				lawn.diffuseColor = Color3.FromHexString('#4a8a3a');
+				lawn.diffuseColor = Utils.linearColorFromHex(0x4a8a3a);
 				lawn.specularColor = Color3.Black();
 				child.material = lawn;
 				const grass = new Grass(child, world, typeof instances === 'number' ? instances : undefined);
@@ -85,7 +85,7 @@ export function loadScene(world: World, loadingManager: LoadingManager, model: L
 			{
 				const moonMat = new StandardMaterial('moonSurface', scene);
 				moonMat.disableLighting = true;
-				moonMat.emissiveTexture = Utils.loadTexture(scene, 'src/img/moon-with-flowers.png', false);
+				moonMat.emissiveTexture = Utils.loadColorTexture(scene, 'src/img/moon-with-flowers.png', false);
 				child.material = moonMat;
 			}
 		}

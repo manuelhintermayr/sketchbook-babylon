@@ -81,7 +81,7 @@ export class Grass implements IWorldEntity
 		noise.seed(Math.random());
 
 		this.groundMaterial = new StandardMaterial('grassGround', scene);
-		this.groundMaterial.diffuseColor.set(0, 0.137, 0);
+		this.groundMaterial.diffuseColor = Utils.linearColorFromHex(0x002300);
 
 		// Base blade: a 1 x `joints` subdivided vertical quad, root at
 		// y=0 (three's PlaneGeometry translated up by h/2).

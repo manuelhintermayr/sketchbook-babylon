@@ -1,9 +1,9 @@
 import {
 	Color4,
+	Constants,
 	Engine,
 	FreeCamera,
 	FxaaPostProcess,
-	ImageProcessingConfiguration,
 	PhysicsBody,
 	PhysicsViewer,
 	Quaternion,
@@ -13,6 +13,7 @@ import {
 
 import { World } from '../World';
 import { LabelRenderer } from '../ui/LabelRenderer';
+import { createToneMappingPass } from '../ToneMappingPostProcess';
 
 // Build the rendering pipeline - Babylon engine + scene, the DOM label
 // overlay, the camera, the FXAA post-process, plus the window-resize
@@ -21,7 +22,7 @@ import { LabelRenderer } from '../ui/LabelRenderer';
 // Side effects assigned to world by the time this returns:
 //   - world.engine, world.canvas, world.scene, world.camera
 //   - world.labelRenderer
-//   - world.fxaaPass
+//   - world.fxaaPass, world.toneMappingPass
 //
 // Run before bootstrapHTML - that function appends world.canvas to
 // <body>, so the engine has to exist first.
@@ -43,9 +44,22 @@ export function setupRendererPipeline(world: World): void
 	// Black space behind the Sky shell; Sky.update() hides the shell
 	// once the camera leaves Earth's atmosphere, revealing this color.
 	world.scene.clearColor = new Color4(0, 0, 0, 1);
-	world.scene.imageProcessingConfiguration.toneMappingEnabled = true;
-	world.scene.imageProcessingConfiguration.toneMappingType = ImageProcessingConfiguration.TONEMAPPING_ACES;
-	world.scene.imageProcessingConfiguration.exposure = 1.0;
+	// Babylon's pointer pipeline calls preventDefault() on pointerdown /
+	// pointerup by default, which suppresses the compatibility mousedown /
+	// mouseup events InputManager's click-and-drag camera listens for.
+	world.scene.preventDefaultOnPointerDown = false;
+	world.scene.preventDefaultOnPointerUp = false;
+	// Colour pipeline mirrors the three.js build, quirk included. With
+	// FXAA on (the default) three rendered into the composer's linear
+	// HalfFloat target and the FXAA pass wrote those raw values to the
+	// screen - no tone mapping, no sRGB encode, clipped highlights, a
+	// saturated cyan sky. That is the look every map was tuned against;
+	// only the direct-to-canvas path (FXAA off) ran ACES + sRGB. So the
+	// scene renders linear throughout - image processing off, glTF
+	// textures as sRGB buffers, lights and colour constants at three's
+	// linear values - and toneMappingPass reproduces the direct path
+	// while FXAA is off (tickRenderPipeline swaps the two).
+	world.scene.imageProcessingConfiguration.isEnabled = false;
 
 	// Camera. far=1010 (swift502 default) clips the moon at distance
 	// ~12320 and the rocketship's max-Y plane at 5200. Inthenew sets
@@ -77,8 +91,15 @@ export function setupRendererPipeline(world: World): void
 	// (they cost frames on integrated GPUs without giving the toon-ish
 	// look much). Attached to the camera right away; tickRenderPipeline
 	// detaches it while params.FXAA is off.
-	world.fxaaPass = new FxaaPostProcess('fxaa', 1.0, world.camera);
+	// Half-float targets like three's composer target, so highlights
+	// above 1 reach FXAA's edge blending and the tone-mapping curve
+	// instead of clipping at the pass boundary (the sky would turn grey).
+	const passTextureType = world.engine.getCaps().textureHalfFloatRender
+		? Constants.TEXTURETYPE_HALF_FLOAT
+		: Constants.TEXTURETYPE_UNSIGNED_BYTE;
+	world.fxaaPass = new FxaaPostProcess('fxaa', 1.0, world.camera, undefined, world.engine, false, passTextureType);
 	world.fxaaAttached = true;
+	world.toneMappingPass = createToneMappingPass(world.engine, passTextureType);
 
 	// Auto window resize. The engine re-reads the canvas size; the label
 	// overlay follows window.inner* like the canvas CSS does.
@@ -94,13 +115,22 @@ export function setupRendererPipeline(world: World): void
 // the loop (timestep + updatables); this helper just writes pixels.
 export function tickRenderPipeline(world: World): void
 {
-	// FXAA attach/detach when the toggle flips. Detaching skips the
-	// fullscreen pass entirely instead of running it with a no-op.
+	// FXAA on = three's composer path (raw linear to the screen), FXAA
+	// off = its direct path (ACES + sRGB) - see setup. Either pass sits
+	// at index 0 so the outline overlay draws on top of it.
 	const wantFxaa = !!world.params.FXAA;
 	if (wantFxaa !== world.fxaaAttached)
 	{
-		if (wantFxaa) world.camera.attachPostProcess(world.fxaaPass, 0);
-		else world.camera.detachPostProcess(world.fxaaPass);
+		if (wantFxaa)
+		{
+			world.camera.detachPostProcess(world.toneMappingPass);
+			world.camera.attachPostProcess(world.fxaaPass, 0);
+		}
+		else
+		{
+			world.camera.detachPostProcess(world.fxaaPass);
+			world.camera.attachPostProcess(world.toneMappingPass, 0);
+		}
 		world.fxaaAttached = wantFxaa;
 	}
 

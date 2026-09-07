@@ -166,5 +166,5 @@ export class Sw02Scene extends BaseScene
 // glTF UVs start top-left, so the textures load un-flipped.
 function loadTexture(scene: Scene, path: string): Texture
 {
-	return Utils.loadTexture(scene, path, false);
+	return Utils.loadColorTexture(scene, path, false);
 }

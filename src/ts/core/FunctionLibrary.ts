@@ -1,5 +1,6 @@
 import {
 	AbstractMesh,
+	Color3,
 	Material,
 	Matrix,
 	Mesh,
@@ -430,10 +431,10 @@ export function easeOutQuad(x: number): number
 //#region Materials
 
 // Flat, lambert-style look for imported models: three swapped every
-// textured glTF material for a shininess-0 MeshPhongMaterial. The
-// Babylon equivalent is a StandardMaterial with black specular, fed by
-// the PBR material's albedo texture / colour. Untextured materials go
-// through the same conversion so lighting responds uniformly.
+// textured glTF material for a shininess-0 MeshPhongMaterial and left
+// the untextured ones on the loader's non-metallic MeshStandardMaterial.
+// The Babylon equivalent is a StandardMaterial with black specular, fed
+// by the PBR material's albedo texture / colour.
 export function setupMeshProperties(child: AbstractMesh): void
 {
 	child.receiveShadows = true;
@@ -441,16 +442,9 @@ export function setupMeshProperties(child: AbstractMesh): void
 	const source = child.material;
 	if (source === null || source instanceof StandardMaterial) return;
 
-	// Primitives without a glTF material: three's loader gave them a
-	// fully metallic white MeshStandardMaterial, which renders near black
-	// without an environment map - the marina walls and pillars in
-	// world.glb rely on that look. Babylon's default would be plain white.
-	if (source.name === '__GLTFLoader._default')
+	if (source instanceof PBRMaterial && isMetallicPlaceholder(source))
 	{
-		const dark = new StandardMaterial('gltfDefault', child.getScene());
-		dark.diffuseColor.set(0.06, 0.06, 0.06);
-		dark.specularColor.set(0.05, 0.05, 0.05);
-		child.material = dark;
+		child.material = createMetalStandIn(source.name, child.getScene());
 		return;
 	}
 
@@ -481,9 +475,46 @@ export function setupMeshProperties(child: AbstractMesh): void
 	child.material = mat;
 }
 
+// Fully metallic, untextured glTF materials: the loader default for
+// primitives without one (the pier, marina walls and pillars in
+// world.glb) and Blender's placeholder in the swift502 test worlds.
+function isMetallicPlaceholder(material: PBRMaterial): boolean
+{
+	return material.albedoTexture === null && material.metallic !== null && material.metallic >= 1;
+}
+
+// three's MeshStandardMaterial gives a white metal no diffuse term, only
+// a rough specular: sunlit faces come out around 0.4 linear at the
+// grazing angles the third-person camera sees the pier from, shaded
+// faces near-black. A grey lambert lands on the same sunlit brightness
+// without a Blinn-Phong lobe lighting up the shaded faces.
+function createMetalStandIn(name: string, scene: Scene): StandardMaterial
+{
+	const grey = new StandardMaterial(name, scene);
+	grey.diffuseColor.set(0.5, 0.5, 0.5);
+	grey.specularColor.set(0.05, 0.05, 0.05);
+	return grey;
+}
+
 export function loadTexture(scene: Scene, url: string, invertY: boolean = true): Texture
 {
 	return new Texture(url, scene, false, invertY);
+}
+
+// For the colour textures three's build tagged SRGBColorSpace: the GPU
+// decodes them to linear on sampling, which is what a diffuse map has to
+// deliver into the linear frame (see RendererPipeline).
+export function loadColorTexture(scene: Scene, url: string, invertY: boolean = true): Texture
+{
+	return new Texture(url, scene, { invertY, useSRGBBuffer: true });
+}
+
+// three's Color(0xrrggbb) decodes the hex from sRGB to linear. The frame
+// renders linear (see RendererPipeline), so material colours given as
+// hex go through the same decode.
+export function linearColorFromHex(color: number): Color3
+{
+	return Color3.FromHexString('#' + color.toString(16).padStart(6, '0')).toLinearSpace(true);
 }
 
 //#endregion

@@ -2,7 +2,6 @@ import {
 	Animation,
 	AnimationGroup,
 	Bone,
-	Color3,
 	Matrix,
 	Mesh,
 	MeshBuilder,
@@ -15,6 +14,7 @@ import {
 } from '@babylonjs/core';
 
 import { BaseScene } from './BaseScene';
+import * as Utils from '../../core/FunctionLibrary';
 
 interface Sizing
 {
@@ -86,8 +86,8 @@ export class TestScene extends BaseScene
 		mesh.setVerticesData(VertexBuffer.MatricesWeightsKind, skinWeights, false, 4);
 
 		const material = new StandardMaterial('skinnedCylinder', this.scene);
-		material.diffuseColor = Color3.FromHexString('#156289');
-		material.emissiveColor = Color3.FromHexString('#072534');
+		material.diffuseColor = Utils.linearColorFromHex(0x156289);
+		material.emissiveColor = Utils.linearColorFromHex(0x072534);
 		material.specularColor.set(0.1, 0.1, 0.1);
 		material.backFaceCulling = false;
 		mesh.material = material;

@@ -1,4 +1,4 @@
-import { Mesh, MeshBuilder, StandardMaterial, Texture } from '@babylonjs/core';
+import { ImageProcessingConfiguration, Mesh, MeshBuilder, StandardMaterial, Texture } from '@babylonjs/core';
 import { PBRCustomMaterial } from '@babylonjs/materials';
 
 import { World } from './World';
@@ -82,6 +82,13 @@ export class Ocean implements IUpdatable
 		mat.metallic = 0.3;
 		mat.roughness = 0.45;
 		mat.backFaceCulling = false;
+		// The scene's image processing is off so StandardMaterials write
+		// raw linear colour (see RendererPipeline). PBR would still gamma
+		// encode on its own; deferring to a post-process that never comes
+		// keeps its output linear as well.
+		const rawOutput = new ImageProcessingConfiguration();
+		rawOutput.applyByPostProcess = true;
+		mat.imageProcessingConfiguration = rawOutput;
 
 		mat.AddUniform('time', 'float', null);
 		mat.AddUniform('grid', 'float', null);
@@ -193,7 +200,7 @@ export class Ocean implements IUpdatable
 				tile.material = mat;
 				tile.position.set(this.tileXOffsets[x], 12, -this.tileZOffsets[z]);
 				tile.isPickable = false;
-				tile.receiveShadows = true;
+				this.world.sky.lightAsPbr(tile);
 				// The vertex displacement moves geometry well outside the
 				// flat ground's bounds; skip culling so a tile whose
 				// centre is off-screen doesn't vanish mid-wave.

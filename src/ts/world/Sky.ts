@@ -1,4 +1,5 @@
 import {
+	AbstractMesh,
 	CascadedShadowGenerator,
 	Color3,
 	Constants,
@@ -16,7 +17,7 @@ import {
 	VertexBuffer,
 	Effect,
 } from '@babylonjs/core';
-import { SkyMaterial } from '@babylonjs/materials';
+import './SkyShader';
 
 import * as Utils from '../core/FunctionLibrary';
 import { World } from './World';
@@ -99,11 +100,15 @@ export class Sky extends TransformNode implements IUpdatable
 	private _theta: number = 145;
 
 	private hemiLight: HemisphericLight;
+	// three's hemisphere irradiance range; refreshHemiIntensity divides
+	// by pi for Babylon's un-normalised lights.
 	private maxHemiIntensity: number = 0.9;
 	private minHemiIntensity: number = 0.3;
+	// Second sun for the PBR ocean - see lightAsPbr.
+	private pbrSunLight: DirectionalLight;
 
 	private skyMesh: Mesh;
-	private skyMaterial: SkyMaterial;
+	private skyMaterial: ShaderMaterial;
 
 	// Decorative black border around the moon when viewed from Earth.
 	// See the constructor for the back-face-shell trick.
@@ -126,17 +131,29 @@ export class Sky extends TransformNode implements IUpdatable
 		this.world = world;
 		const scene = world.scene;
 
-		// Sky material - the same Preetham atmospheric-scattering model
-		// three's Sky example uses, driven by a sun direction.
-		this.skyMaterial = new SkyMaterial('skyMaterial', scene);
+		// Sky material - three's Sky shader (Preetham scattering + cloud
+		// layer, see SkyShader.ts) with three's default uniforms, which is
+		// what the three.js build clones into its ShaderMaterial.
+		this.skyMaterial = new ShaderMaterial('skyMaterial', scene, 'sketchbookSky', {
+			attributes: ['position'],
+			uniforms: ['world', 'viewProjection', 'cameraPosition', 'sunPosition', 'up', 'rayleigh', 'turbidity',
+				'mieCoefficient', 'mieDirectionalG', 'cloudScale', 'cloudSpeed', 'cloudCoverage', 'cloudDensity',
+				'cloudElevation', 'time'],
+		});
 		this.skyMaterial.backFaceCulling = false;
-		this.skyMaterial.useSunPosition = true;
-		this.skyMaterial.turbidity = 2;
-		this.skyMaterial.rayleigh = 1;
-		this.skyMaterial.mieCoefficient = 0.005;
-		this.skyMaterial.mieDirectionalG = 0.8;
-		this.skyMaterial.luminance = 1;
 		this.skyMaterial.disableDepthWrite = true;
+		this.skyMaterial.setFloat('turbidity', 2);
+		this.skyMaterial.setFloat('rayleigh', 1);
+		this.skyMaterial.setFloat('mieCoefficient', 0.005);
+		this.skyMaterial.setFloat('mieDirectionalG', 0.8);
+		this.skyMaterial.setVector3('up', new Vector3(0, 1, 0));
+		this.skyMaterial.setFloat('cloudScale', 0.0002);
+		this.skyMaterial.setFloat('cloudSpeed', 0.0001);
+		this.skyMaterial.setFloat('cloudCoverage', 0.4);
+		this.skyMaterial.setFloat('cloudDensity', 0.4);
+		this.skyMaterial.setFloat('cloudElevation', 0.5);
+		this.skyMaterial.setFloat('time', 0);
+		this.skyMaterial.setVector3('sunPosition', this.sunPosition);
 
 		// Mesh. Sky shell, Earth/Moon spheres, and the star points all
 		// go on OutlineSkip - they're "background" geometry whose
@@ -206,7 +223,9 @@ export class Sky extends TransformNode implements IUpdatable
 		markOutlineSkip(this.starsMesh);
 
 		// Ambient light. Sky colour HSL(0.59, 0.4, 0.6) and ground colour
-		// HSL(0.095, 0.2, 0.75) from the three version, converted to RGB.
+		// HSL(0.095, 0.2, 0.75) from the three version, which stored them
+		// as linear RGB - the frame renders linear (see RendererPipeline),
+		// so they carry over unchanged.
 		this.hemiLight = new HemisphericLight('hemiLight', new Vector3(0, 1, 0), scene);
 		this.hemiLight.diffuse = new Color3(0.44, 0.587, 0.76);
 		this.hemiLight.groundColor = new Color3(0.8, 0.757, 0.7);
@@ -217,11 +236,21 @@ export class Sky extends TransformNode implements IUpdatable
 		// splits at 1/16, 1/4 and 1 of 250 m; Babylon's practical split
 		// with lambda 0.9 lands close enough. 1024 keeps shadow-map work
 		// down to ~3 MP/frame across the 3 cascades.
+		// three's CSM light: intensity 2.5 through a 1/pi lambert BRDF,
+		// i.e. 2.5 / pi for StandardMaterial's un-normalised lambert.
 		this.sunLight = new DirectionalLight('sun', new Vector3(-1, -1, -1), scene);
-		this.sunLight.intensity = 1.6;
-		this.sunLight.specular = Color3.Black();
+		this.sunLight.intensity = 2.5 / Math.PI;
 		this.sunLight.shadowMinZ = 0.1;
 		this.sunLight.shadowMaxZ = 250;
+		// three's CSM ran one DirectionalLight per cascade (3 x 2.5) and
+		// the ocean's material was never handed to csm.setupMaterial, so
+		// all three hit it at once - that sum is what made the water glow.
+		// PBR's diffuse BRDF carries the 1/pi itself, hence no division.
+		// An empty includedOnlyMeshes means "every mesh", so the light
+		// stays off until lightAsPbr hands it its first mesh.
+		this.pbrSunLight = new DirectionalLight('sunPbr', new Vector3(-1, -1, -1), scene);
+		this.pbrSunLight.intensity = 3 * 2.5;
+		this.pbrSunLight.setEnabled(false);
 
 		this.shadowGenerator = new CascadedShadowGenerator(1024, this.sunLight);
 		this.shadowGenerator.numCascades = 3;
@@ -315,6 +344,16 @@ export class Sky extends TransformNode implements IUpdatable
 
 		this.lightDirection.set(-this.sunPosition.x, -this.sunPosition.y, -this.sunPosition.z).normalize();
 		this.sunLight.direction.copyFrom(this.lightDirection);
+		this.pbrSunLight.direction.copyFrom(this.lightDirection);
+	}
+
+	// Swaps a PBR-lit mesh onto the ocean's sun; the hemisphere light is
+	// shared, PBR takes that one raw as well.
+	public lightAsPbr(mesh: AbstractMesh): void
+	{
+		this.sunLight.excludedMeshes.push(mesh);
+		this.pbrSunLight.includedOnlyMeshes.push(mesh);
+		this.pbrSunLight.setEnabled(true);
 	}
 
 	public refreshSunPosition(): void
@@ -325,12 +364,13 @@ export class Sky extends TransformNode implements IUpdatable
 		this.sunPosition.y = sunDistance * Math.sin(this._phi * Math.PI / 180);
 		this.sunPosition.z = sunDistance * Math.cos(this._theta * Math.PI / 180) * Math.cos(this._phi * Math.PI / 180);
 
-		this.skyMaterial.sunPosition.copyFrom(this.sunPosition);
+		this.skyMaterial.setVector3('sunPosition', this.sunPosition);
 	}
 
 	public refreshHemiIntensity(): void
 	{
-		this.hemiLight.intensity = this.minHemiIntensity + Math.pow(1 - (Math.abs(this._phi - 90) / 90), 0.25) * (this.maxHemiIntensity - this.minHemiIntensity);
+		const irradiance = this.minHemiIntensity + Math.pow(1 - (Math.abs(this._phi - 90) / 90), 0.25) * (this.maxHemiIntensity - this.minHemiIntensity);
+		this.hemiLight.intensity = irradiance / Math.PI;
 	}
 
 	private buildStarsMesh(): Mesh

@@ -25,7 +25,7 @@ export function applySignMaterials(scene: Scene, root: TransformNode, bigCredits
 	const textured = (file: string, transparent: boolean): StandardMaterial =>
 	{
 		const material = new StandardMaterial(file, scene);
-		const texture: Texture = Utils.loadTexture(scene, SIGN_DIR + file, false);
+		const texture: Texture = Utils.loadColorTexture(scene, SIGN_DIR + file, false);
 		material.diffuseTexture = texture;
 		material.specularColor.set(0, 0, 0);
 		if (transparent)

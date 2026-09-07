@@ -1,4 +1,4 @@
-import { Color3, Mesh, MeshBuilder, PhysicsMotionType, PhysicsPrestepType, Scene, StandardMaterial, TransformNode, Vector3 } from '@babylonjs/core';
+import { Mesh, MeshBuilder, PhysicsMotionType, PhysicsPrestepType, Scene, StandardMaterial, TransformNode, Vector3 } from '@babylonjs/core';
 
 import { World } from '../World';
 import { IWorldEntity } from '../../interfaces/IWorldEntity';
@@ -8,6 +8,7 @@ import { CollisionGroups } from '../../enums/CollisionGroups';
 import { mulberry32 } from '../../core/FunctionLibrary';
 import { BirdSound } from '../audio/BirdSound';
 import { SphereCollider } from '../../physics/colliders/SphereCollider';
+import * as Utils from '../../core/FunctionLibrary';
 
 // Flying birds as positional audio entities. Replaces the old global
 // bird-chirp synth in AmbientSound: each bird now owns a small visual
@@ -85,7 +86,7 @@ interface Bird
 function mat(scene: Scene, color: number): StandardMaterial
 {
 	const material = new StandardMaterial('bird', scene);
-	material.diffuseColor = Color3.FromHexString('#' + color.toString(16).padStart(6, '0'));
+	material.diffuseColor = Utils.linearColorFromHex(color);
 	material.specularColor.set(0.05, 0.05, 0.05);
 	return material;
 }

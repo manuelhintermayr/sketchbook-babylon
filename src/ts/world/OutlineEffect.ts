@@ -2,6 +2,7 @@ import { Color3, DepthRenderer, Effect, PostProcess, Texture } from '@babylonjs/
 
 import { World } from './World';
 import { isOutlineSkip } from '../enums/RenderLayers';
+import * as Utils from '../core/FunctionLibrary';
 
 // Depth-edge outline pass. Babylon's DepthRenderer writes the scene's
 // linear depth into a render target; a post-process then runs a Sobel
@@ -55,7 +56,7 @@ const OUTLINE_FRAGMENT = `
 
 		float outline = smoothstep(relativeThreshold * 0.5, relativeThreshold, scaledEdge);
 		vec4 base = texture2D(textureSampler, vUV);
-		gl_FragColor = vec4(base.rgb + outlineColor * outline * outlineStrength, base.a);
+		gl_FragColor = vec4(mix(base.rgb, outlineColor, outline * outlineStrength), base.a);
 	}
 `;
 
@@ -67,7 +68,7 @@ export class OutlineEffect
 	private depthRenderer: DepthRenderer | null = null;
 	private postProcess: PostProcess | null = null;
 
-	private outlineColor: Color3 = new Color3(0.13, 0.13, 0.13);
+	private outlineColor: Color3 = Utils.linearColorFromHex(0x222222);
 	private outlineStrength: number = 1.0;
 	// Edge/avgDepth ratio above which the pixel is treated as a
 	// silhouette. Babylon's depth renderer stores linear view-space

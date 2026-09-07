@@ -18,8 +18,8 @@ the procedural audio synths are unchanged.
 
 ### Changed
 
-- **Renderer** - Babylon `Engine` + right-handed `Scene` (WebGL2 required), ACES tone mapping, `FxaaPostProcess` toggled at runtime, `CascadedShadowGenerator` (1024 px x 3) on the sun light, outline as `DepthRenderer` + Sobel `PostProcess`, DOM `LabelRenderer` replacing `CSS2DRenderer`.
-- **Scene graph** - `Character` and `Vehicle` extend `TransformNode`; glTF loads through `@babylonjs/loaders` and userData markers are read from `node.metadata` via `Utils.userData()`; `Sky` on `SkyMaterial` with custom star / moon-outline meshes; `Ocean` as a `PBRCustomMaterial` wave shader; `Grass` as instanced `VertexBuffer`s on a `ShaderMaterial`; skeletal animation through `AnimationGroup`s with `scene.animationTimeScale` following Time_Scale.
+- **Renderer** - Babylon `Engine` + right-handed `Scene` (WebGL2 required), a linear colour pipeline that mirrors three's composer output (raw linear on screen with FXAA on, three's ACES + sRGB as a half-float pass with FXAA off), `FxaaPostProcess` toggled at runtime, `CascadedShadowGenerator` (1024 px x 3) on the sun light, outline as `DepthRenderer` + Sobel `PostProcess`, DOM `LabelRenderer` replacing `CSS2DRenderer`.
+- **Scene graph** - `Character` and `Vehicle` extend `TransformNode`; glTF loads through `@babylonjs/loaders` and userData markers are read from `node.metadata` via `Utils.userData()`; `Sky` on a port of three's Sky shader (Preetham + cloud layer) with custom star / moon-outline meshes; `Ocean` as a `PBRCustomMaterial` wave shader; `Grass` as instanced `VertexBuffer`s on a `ShaderMaterial`; skeletal animation through `AnimationGroup`s with `scene.animationTimeScale` following Time_Scale.
 - **Physics** - Babylon Physics V2 over Havok: `PhysicsWorld` facade with manual stepping and pre/post-step listeners, collider wrappers on `PhysicsBody` + `PhysicsShape*`, capsule character with locked rotation, port of cannon-es's `RaycastVehicle` on Havok bodies (cars, boats, helicopters, airplanes, rocket keep their tuning values), `PhysicsViewer` debug overlay, animated bodies for birds / butterflies, dynamic spheres for the animals.
 - **Audio** - `SpatialAudio.ts` (`AudioListener`, `PositionalAudio` on a `PannerNode`) replaces `THREE.AudioListener` / `PositionalAudio`; every synth keeps its graph.
 - **Sandboxes** - `BaseScene` builds against the World's scene through a factory; the socketControl scenes use small builder helpers, the swift502 credits sign was converted from FBX to GLB with Blender (`build/assets/credits_sign/sign.glb`).
@@ -31,7 +31,10 @@ the procedural audio synths are unchanged.
 - Physics steps at fixed 1/60 s substeps again (max 10 per frame); the raycast vehicle's tyre model is frame-rate dependent otherwise.
 - Chassis inertia follows cannon's AABB box approximation and Havok's inertia-over-mass convention; measured steering response now matches the three.js build.
 - glTF loads with `createInstances: false` so shared collision-marker meshes are real meshes (hidden + collidable) instead of visible white instances.
-- Primitives without a glTF material render dark like three's metallic default; the label overlay no longer intercepts click-and-drag camera input.
+- Lighting and sky match the three.js build at the spawn, marina and pier (pixel means within a few units): image processing is off so the frame is linear like three's composer target, glTF textures are sRGB buffers, lights carry three's values (sun 2.5 / pi, hemisphere 0.3-0.9 / pi with the linear HSL tints, the ocean's sun 3 x 2.5 because three's CSM lit its unregistered material with all three cascade lights), colour constants are decoded from hex like three's `Color` (`Utils.linearColorFromHex`), colour textures three tagged sRGB load through `Utils.loadColorTexture`, and the dome is three's Sky shader.
+- FXAA off reproduces three's direct-to-canvas path (ACES with the 1 / 0.6 pre-scale + sRGB) through `ToneMappingPostProcess`; the outline overlay blends its dark colour like three's quad instead of adding it.
+- Primitives without a glTF material and the test worlds' white metal placeholders render as the mid grey three's metallic default gave them.
+- Click-and-drag camera works: Babylon's pointer pipeline no longer calls `preventDefault()` on pointerdown / pointerup, which had suppressed the mousedown / mouseup events InputManager listens for (the label overlay fix alone was not enough).
 - Title screen, page title and welcome dialog name the Babylon.js + Havok edition.
 
 ### Removed
